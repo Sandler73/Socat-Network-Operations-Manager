@@ -1,0 +1,142 @@
+# =============================================================================
+# .gitignore - socat_manager.sh project
+# =============================================================================
+# Excludes runtime artifacts, session data, logs, certificates, and
+# environment-specific files from version control. Only the script itself,
+# documentation, and configuration templates should be committed.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Runtime directories (created automatically by socat_manager.sh)
+# These contain ephemeral session data, logs, and generated certificates
+# that are specific to each deployment and should never be committed.
+# -----------------------------------------------------------------------------
+
+# Session metadata files (contain PIDs, PGIDs, commands - deployment-specific)
+sessions/
+sessions/*.session
+sessions/*.pid
+sessions/*.stop
+sessions/*.launching
+
+# Log files (master logs, session logs, error logs, capture logs)
+logs/
+logs/*.log
+
+# Auto-generated TLS certificates and private keys (tunnel mode)
+# CRITICAL: Private keys must NEVER be committed to version control
+certs/
+certs/*.pem
+certs/*.key
+certs/*.crt
+
+# Configuration directory (may contain deployment-specific port configs)
+# NOTE: Template configs (e.g., ports.conf.example) SHOULD be committed.
+#       Remove this entry if you want to track actual config files.
+conf/
+
+# -----------------------------------------------------------------------------
+# OS and editor artifacts
+# -----------------------------------------------------------------------------
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+*.swp
+*.swo
+*.swn
+.nfs*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Vim
+*.vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+Session.vim
+.netrwhist
+tags
+
+# Emacs
+\#*\#
+.#*
+*.elc
+auto-save-list
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Shell and development artifacts
+# -----------------------------------------------------------------------------
+
+# Shell history and environment
+.bash_history
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.backup
+
+# Archives (don't commit packaged releases to source)
+*.tar.gz
+*.tar.bz2
+*.zip
+*.7z
+
+# Python bytecode (if any helper scripts use Python)
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environments (if wrapper scripts use Python venvs)
+venv/
+.venv/
+env/
+.env/
+
+# Node.js (if any tooling uses npm)
+node_modules/
+package-lock.json
+
+# -----------------------------------------------------------------------------
+# Security-sensitive files that must NEVER be committed
+# -----------------------------------------------------------------------------
+
+# Private keys and credentials (redundant with certs/ above, belt-and-suspenders)
+*.key
+*.pem
+!certs/  # Already ignored above, but explicit for clarity
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.secret
+*.password
+*.credentials
