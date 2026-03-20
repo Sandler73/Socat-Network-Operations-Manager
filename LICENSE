@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Ryan
+Copyright (c) 2026 Sandler73
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--- Additional Notices ---
+
+This software is intended for authorized network operations, security testing,
+research, and educational purposes only. Users are solely responsible for
+ensuring their use of this software complies with all applicable local, state,
+national, and international laws and regulations. The authors and contributors
+assume no liability for misuse or for any damages resulting from the use of
+this software.
+
+This software relies on socat (http://www.dest-unreach.org/socat/) and OpenSSL
+(https://www.openssl.org/), which are distributed under their own respective
+licenses. Users should review and comply with the license terms of all
+dependencies.
