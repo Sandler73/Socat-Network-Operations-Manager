@@ -96,6 +96,13 @@ helper_setup() {
     # This shadows real socat, ss, and openssl with test stubs.
     export PATH="${STUBS_DIR}:${PATH}"
 
+    # Clear bash's command hash table. Bash caches the full path of
+    # previously resolved commands. On CI runners, ss/socat/openssl may
+    # already be cached at /usr/sbin/ss etc. from the system environment.
+    # Without this, bash reuses the cached real binary path even though
+    # the stubs directory is now first in PATH.
+    hash -r
+
     # Disable set -e for test context (BATS handles assertions differently).
     # The script sets `set -euo pipefail` at the top level. When sourced
     # in BATS, this would cause tests to fail on the first non-zero exit
