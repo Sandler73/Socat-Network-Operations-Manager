@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#======================================================================
+# STUB       : tests/stubs/socat
+#======================================================================
+# Synopsis   : Mock socat binary for BATS testing.
+#
+# Description: Replaces the real socat in PATH during tests. When the
+#              launch wrapper executes `exec socat ...`, it exec's into
+#              this stub instead. The stub:
+#
+#              1. Logs all received arguments to a state file so tests
+#                 can verify the correct socat command was constructed
+#              2. Sleeps indefinitely (or for a configured duration) to
+#                 simulate a running socat listener/forwarder/redirector
+#              3. Responds to SIGTERM for clean shutdown testing
+#
+#              The PID-file handoff pattern works correctly with this
+#              stub because `exec` preserves the PID — the stub runs
+#              under the same PID that bash wrote to the staging file.
+#
+# Environment:
+#   TEST_TMPDIR - Temp directory for this test (set by test_helper)
+#                 Stub writes its log to ${TEST_TMPDIR}/.socat_stub.log
+#   SOCAT_STUB_SLEEP - How long to sleep (default: 3600 seconds)
+#   SOCAT_STUB_EXIT  - If set, exit immediately with this code
+#                      (used for watchdog/crash testing)
+#
+# Notes      : - This file must be executable (chmod +x)
+#              - Prepended to PATH by test_helper.bash so it shadows
+#                the real socat binary
+#              - The stub traps SIGTERM for graceful shutdown testing
+#
+# Version    : 1.0.0
+#======================================================================
+
+# Determine log file location
+STUB_LOG="${TEST_TMPDIR:-.}/.socat_stub.log"
+
+# Log the invocation: timestamp, PID, and all arguments
+echo "[$(date '+%Y-%m-%dT%H:%M:%S')] PID=$$ ARGS=$*" >> "${STUB_LOG}" 2>/dev/null || true
+
+# If SOCAT_STUB_EXIT is set, exit immediately with that code.
+# Used for testing watchdog restart behavior (simulate crash).
+if [[ -n "${SOCAT_STUB_EXIT:-}" ]]; then
+    exit "${SOCAT_STUB_EXIT}"
+fi
+
+# Trap SIGTERM for graceful shutdown testing.
+# When _stop_session sends SIGTERM, this trap fires, the stub exits
+# cleanly, and the test can verify the stop sequence worked.
+trap 'exit 0' TERM
+
+# Trap SIGINT (Ctrl+C) for interactive testing
+trap 'exit 0' INT
+
+# Sleep to simulate a running socat process.
+# Default: 3600 seconds (1 hour) — tests will kill the stub via
+# SIGTERM or SIGKILL long before this expires.
+# Use `wait` instead of raw `sleep` so the trap can interrupt it.
+sleep "${SOCAT_STUB_SLEEP:-60}" &
+wait $! 2>/dev/null || true
+
+exit 0
