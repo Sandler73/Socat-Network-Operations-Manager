@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">Socat Network Operations Manager</h1>
   <p align="center">
-    A socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
+    Comprehensive socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
   </p>
 </p>
 
@@ -13,8 +13,8 @@
   <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
   <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa?style=flat-square" alt="Code of Conduct">
-  <img src="https://img.shields.io/badge/tests-143%20passing-brightgreen?style=flat-square" alt="143 Tests Passing">
-  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" alt="GitHub Actions CI">
+  <img src="https://img.shields.io/github/actions/workflow/status/<your-org>/socat-manager/test.yml?style=flat-square&label=tests&logo=githubactions&logoColor=white" alt="CI Tests">
+  <img src="https://img.shields.io/badge/BATS-143%2B%20tests-blue?style=flat-square" alt="143+ BATS Tests">
 </p>
 
 <p align="center">
