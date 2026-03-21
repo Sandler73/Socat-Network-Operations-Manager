@@ -22,7 +22,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/last-commit/Sandler73/Socat-Network-Operations-Manager?style=flat-square&color=FF6F3C&label=last%20commit" alt="Last Commit">
   <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
+  <img src="https://img.shields.io/badge/PRs-welcome-azure?style=flat-square" alt="PRs Welcome">
 </p>
 
 <p align="center">
