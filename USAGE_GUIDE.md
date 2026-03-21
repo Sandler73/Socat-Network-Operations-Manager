@@ -46,7 +46,8 @@ This guide provides complete instructions for installing, configuring, and execu
   - [8.4 DNS Proxy](#84-dns-proxy)
   - [8.5 Multi-Service Lab Environment](#85-multi-service-lab-environment)
 - [9. Log Management](#9-log-management)
-- [10. Troubleshooting](#10-troubleshooting)
+- [10. Running Tests](#10-running-tests)
+- [11. Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -204,7 +205,64 @@ sudo /opt/tools/socat-manager/socat_manager.sh redirect --lport 443 --rhost inte
 
 Install `socat_manager.sh` as a system-wide command so it can be invoked as `socat-manager` from any directory by any user.
 
-#### Method A: Symlink to /usr/local/bin (Recommended)
+#### Method A: Makefile Install (Recommended)
+
+The project includes a Makefile that automates installation, including the
+wrapper script, runtime directory creation, and documentation copying. This
+is the recommended method for most users.
+
+```bash
+# Default install: script to /opt/tools/socat-manager, command to /usr/local/bin
+sudo make install
+
+# Verify
+socat-manager --version
+socat-manager --help
+```
+
+**Custom paths:**
+
+```bash
+# User-local install (no root required)
+make install PREFIX=~/.local/socat-manager BINDIR=~/.local/bin
+
+# Custom install directory
+sudo make install PREFIX=/usr/local/share/socat-manager
+```
+
+**Uninstall:**
+
+```bash
+sudo make uninstall
+```
+
+The `install` target:
+1. Copies `socat_manager.sh` to `PREFIX`
+2. Creates runtime directories (`sessions/`, `logs/`, `certs/`, `conf/`) with correct permissions
+3. Copies all documentation files
+4. Copies the test suite (for post-install verification)
+5. Installs the `bin/socat-manager` wrapper to `BINDIR` with `PREFIX` patched in
+
+The `uninstall` target removes the wrapper and prompts before deleting the
+install directory (which may contain runtime data).
+
+**All Makefile targets:**
+
+```bash
+make help             # Show all targets with descriptions
+make check-deps       # Verify prerequisites (socat, bash, bats, shellcheck)
+make lint             # Run ShellCheck static analysis
+make test             # Run full test suite (lint + BATS)
+make test-unit        # Run unit tests only (fast)
+make test-integration # Run integration tests only
+make install          # Install system-wide
+make uninstall        # Remove installation
+make venv             # Create isolated virtual environment
+make dist             # Build release tarballs + SHA256 checksums
+make clean            # Remove build artifacts
+```
+
+#### Method B: Symlink to /usr/local/bin
 
 This method keeps the script in its project directory and creates a symbolic link in a directory on the system PATH. Updates to the script are immediately available.
 
@@ -232,7 +290,7 @@ socat-manager stop --all
 
 **Runtime directories** will be created at `/opt/tools/socat-manager/sessions/`, `/opt/tools/socat-manager/logs/`, etc., since the script resolves its own location via the symlink.
 
-#### Method B: Copy to /usr/local/bin
+#### Method C: Copy to /usr/local/bin
 
 This places the script itself in `/usr/local/bin`. Simpler, but updates require re-copying.
 
@@ -248,9 +306,9 @@ socat-manager --version
 socat-manager listen --port 8080
 ```
 
-**Note:** Runtime directories will be created at `/usr/local/bin/sessions/`, `/usr/local/bin/logs/`, etc., which is typically undesirable. Use Method A (symlink) or Method C (wrapper) instead.
+**Note:** Runtime directories will be created at `/usr/local/bin/sessions/`, `/usr/local/bin/logs/`, etc., which is typically undesirable. Use Method A (`make install`), Method B (symlink), or Method D (wrapper) instead.
 
-#### Method C: Wrapper Script with Custom Runtime Directory
+#### Method D: Wrapper Script with Custom Runtime Directory
 
 Create a wrapper that sets a custom runtime base directory, keeping runtime data out of system paths:
 
@@ -283,7 +341,7 @@ socat-manager --version
 socat-manager status
 ```
 
-#### Method D: User-Local Installation (No Root Required)
+#### Method E: User-Local Installation (No Root Required)
 
 Install for the current user only using `~/.local/bin`:
 
@@ -1119,7 +1177,111 @@ EOF
 
 ---
 
-## 10. Troubleshooting
+## 10. Running Tests
+
+### Prerequisites
+
+Install the testing tools:
+
+```bash
+# BATS (Bash Automated Testing System) — install from source for latest version
+git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
+sudo /tmp/bats-core/install.sh /usr/local
+bats --version
+
+# ShellCheck — static analysis for bash
+sudo apt-get install -y shellcheck
+
+# Verify all dependencies at once
+make check-deps
+```
+
+### Running the Full Suite
+
+```bash
+make test
+```
+
+This runs three stages in order: ShellCheck linting, unit tests, then
+integration tests. All 143 tests must pass. Output looks like:
+
+```
+  Running ShellCheck...
+  ✓ ShellCheck passed
+
+  Running unit tests...
+  1..98
+  ok 1 session_register: creates session file with correct name
+  ok 2 session_register: writes all required fields
+  ...
+  ok 98 get_alt_protocol: udp6 returns tcp6
+
+  Running integration tests...
+  1..45
+  ok 1 build_socat_listen_cmd: capture=true adds -v flag
+  ...
+  ok 45 build_socat_tunnel_cmd: produces correct command structure
+
+  ════════════════════════════════════════
+  ✓ All tests passed
+  ════════════════════════════════════════
+```
+
+### Running Specific Test Groups
+
+```bash
+# Unit tests only (fast, ~2 seconds, no stubs)
+make test-unit
+
+# Integration tests only (uses mock socat/ss/openssl stubs)
+make test-integration
+
+# ShellCheck linting only
+make lint
+```
+
+### Running Individual Tests
+
+```bash
+# Single test file
+bats tests/unit/validation.bats
+
+# Specific test by name (partial match)
+bats tests/integration/dual_stack.bats --filter "stopping TCP"
+
+# All tests matching a pattern across all files
+bats --recursive tests/ --filter "validate_port"
+```
+
+### Test Architecture
+
+Tests use mock stubs instead of real socat, ss, and openssl. This means:
+
+- **No network operations** — no ports are actually bound or traffic forwarded
+- **No root required** — tests run entirely in user space
+- **No external dependencies** — socat doesn't need to be installed to run tests
+- **Full isolation** — each test gets its own temp directory; no test affects another
+
+The mock socat stub logs its arguments (so tests verify correct command
+construction) and sleeps (so tests have a real PID to track and stop).
+The mock ss stub reads a state file to report which ports are "listening."
+
+For details on writing new tests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Continuous Integration
+
+Every push and pull request triggers the [GitHub Actions CI workflow](.github/workflows/test.yml) which runs:
+
+1. **ShellCheck** lint on `socat_manager.sh` and `bin/socat-manager`
+2. **BATS** test suite across a matrix:
+   - Ubuntu 22.04 (bash 5.1) and Ubuntu 24.04 (bash 5.2)
+   - Bash 4.4 compiled from source (minimum supported version)
+
+Releases are automated by the [release workflow](.github/workflows/release.yml): push a `v*` tag to trigger test → build → publish with tarballs and SHA256 checksums.
+
+---
+
+## 11. Troubleshooting
 
 ### "socat is not installed or not in PATH"
 
