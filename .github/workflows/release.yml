@@ -43,6 +43,10 @@ on:
     tags:
       - 'v*'  # Trigger on any tag starting with 'v'
 
+# Force Node.js 24 for all JavaScript-based actions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # =====================================================================
 # PERMISSIONS
 # Requires write access to create releases and upload assets.
