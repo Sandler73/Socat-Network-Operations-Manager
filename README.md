@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
-  <img src="https://img.shields.io/badge/BATS-182%20tests-blue?style=flat-square" alt="182 BATS Tests">
+  <img src="https://img.shields.io/badge/BATS-182%20tests-blue?style=flat-square" alt="187 BATS Tests">
 </p>
 
 <p align="center">
