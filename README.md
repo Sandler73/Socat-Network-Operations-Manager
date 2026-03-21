@@ -10,14 +10,19 @@
   <img src="https://img.shields.io/badge/shell-bash%204.4%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="Bash 4.4+">
   <img src="https://img.shields.io/badge/platform-linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
-  <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
+  <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa?style=flat-square" alt="Code of Conduct">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa?style=flat-square" alt="Code of Conduct">
+  <img src="https://img.shields.io/badge/ShellCheck-passing-7B68EE?style=flat-square&logo=gnubash&logoColor=white" alt="ShellCheck">
   <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
   <img src="https://img.shields.io/badge/BATS-187%20tests-blue?style=flat-square" alt="187 BATS Tests">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/last-commit/Sandler73/Socat-Network-Operations-Manager?style=flat-square&color=FF6F3C&label=last%20commit" alt="Last Commit">
+  <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
 </p>
 
 <p align="center">
