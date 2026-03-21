@@ -122,11 +122,11 @@ tar xzf bash-5.2.tar.gz && cd bash-5.2
 
 ```bash
 # Option A: Clone from repository (if hosted in Git)
-git clone https://github.com/<your-org>/socat-manager.git
+git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
 cd socat-manager
 
 # Option B: Direct download
-curl -O https://<your-host>/socat_manager.sh
+curl -O https://github.com/Sandler73/Socat-Network-Operations-Manager/releases/latest/download/socat_manager.sh
 
 # Option C: Copy from local source
 cp /path/to/socat_manager.sh ./socat_manager.sh
@@ -1203,7 +1203,7 @@ make test
 ```
 
 This runs three stages in order: ShellCheck linting, unit tests, then
-integration tests. All 143 tests must pass. Output looks like:
+integration tests. All 182 tests must pass. Output looks like:
 
 ```
   Running ShellCheck...
