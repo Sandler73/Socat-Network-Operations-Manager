@@ -13,6 +13,8 @@
   <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
   <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa?style=flat-square" alt="Code of Conduct">
+  <img src="https://img.shields.io/badge/tests-143%20passing-brightgreen?style=flat-square" alt="143 Tests Passing">
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" alt="GitHub Actions CI">
 </p>
 
 <p align="center">
@@ -21,6 +23,7 @@
   <a href="USAGE_GUIDE.md">Usage Guide</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="SECURITY.md">Security</a> ·
+  <a href="#testing">Testing</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -51,6 +54,7 @@
 - [Directory Structure](#directory-structure)
 - [Security Considerations](#security-considerations)
 - [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
 - [Contributing](#contributing)
 - [Documentation](#documentation)
 - [Version History](#version-history)
@@ -243,19 +247,23 @@ sudo apt-get update && sudo apt-get install -y socat
 # 2. Clone or download
 git clone https://github.com/<your-org>/socat-manager.git
 cd socat-manager
-chmod +x socat_manager.sh
 
-# 3. Start a TCP listener on port 8080
-./socat_manager.sh listen --port 8080
+# 3. Install system-wide (or skip this and run directly with ./socat_manager.sh)
+sudo make install
 
-# 4. Check session status
-./socat_manager.sh status
+# 4. Start a TCP listener on port 8080
+socat-manager listen --port 8080
 
-# 5. Stop everything
-./socat_manager.sh stop --all
+# 5. Check session status
+socat-manager status
+
+# 6. Stop everything
+socat-manager stop --all
 ```
 
-For detailed installation options including system-wide command installation and virtual environment setup, see the [Usage Guide](USAGE_GUIDE.md).
+**Alternative**: Run directly without installing — `chmod +x socat_manager.sh && ./socat_manager.sh listen --port 8080`
+
+For detailed installation options including `make install`, user-local install, and virtual environment setup, see the [Usage Guide](USAGE_GUIDE.md).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -670,31 +678,36 @@ Master and session logs use structured format compliant with OWASP Logging Cheat
 ## Directory Structure
 
 ```
-socat_manager.sh              # Main script (chmod +x)
-├── sessions/                 # Session metadata files (.session) [perms: 700]
-│   ├── a1b2c3d4.session      # Active session file [perms: 600]
-│   └── e5f67890.session
-├── logs/                     # All log files
-│   ├── socat_manager-*.log   # Master execution logs
-│   ├── session-*-*.log       # Session audit trail logs
-│   ├── session-*-error.log   # Session stderr logs
-│   ├── listener-*-*.log      # Listener data capture logs
-│   └── capture-*-*.log       # Traffic capture logs
-├── certs/                    # Auto-generated TLS certificates (tunnel mode)
-│   ├── *.pem                 # Certificates [perms: 644]
-│   └── *.key                 # Private keys [perms: 600]
-├── conf/                     # Configuration files
-│   └── ports.conf            # Batch port configuration
-├── README.md                 # This file
-├── USAGE_GUIDE.md            # Detailed usage and deployment guide
-├── CHANGELOG.md              # Version history and change details
-├── SECURITY.md               # Security policy and threat model
-├── CODE_OF_CONDUCT.md        # Contributor code of conduct
-├── LICENSE                   # MIT License
-└── .gitignore                # Git ignore rules
+socat-manager/                    # Repository root
+├── socat_manager.sh              # Main script (chmod +x)
+├── Makefile                      # Build, test, install, package
+├── .shellcheckrc                 # ShellCheck configuration
+├── .gitignore                    # Git ignore rules
+├── bin/
+│   └── socat-manager             # System-wide wrapper script
+├── templates/
+│   └── activate.sh              # Virtual environment activation template
+├── tests/                       # BATS test suite (143 tests)
+│   ├── helpers/test_helper.bash  # Shared setup/teardown
+│   ├── stubs/                    # Mock binaries (socat, ss, openssl)
+│   ├── fixtures/                 # Test data (session files, port configs)
+│   ├── unit/                     # Unit tests (validation, session)
+│   └── integration/              # Integration tests (lifecycle, dual-stack, capture)
+├── .github/
+│   ├── workflows/test.yml        # CI: lint + BATS on push/PR
+│   ├── workflows/release.yml     # CD: build + publish on tag
+│   ├── ISSUE_TEMPLATE/           # Bug report, feature request, security
+│   └── PULL_REQUEST_TEMPLATE.md  # PR checklist
+├── README.md                     # This file
+├── USAGE_GUIDE.md                # Detailed usage and deployment guide
+├── CONTRIBUTING.md               # Development setup and contribution guide
+├── CHANGELOG.md                  # Version history and change details
+├── SECURITY.md                   # Security policy and threat model
+├── CODE_OF_CONDUCT.md            # Contributor code of conduct
+└── LICENSE                       # MIT License
 ```
 
-All runtime directories (`sessions/`, `logs/`, `certs/`, `conf/`) are created automatically on first run.
+Runtime directories (`sessions/`, `logs/`, `certs/`, `conf/`) are created automatically on first run and excluded from version control by `.gitignore`.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -779,7 +792,47 @@ If SIGTERM doesn't work within the grace period (5 seconds), socat may have chil
 ss -tlnp | grep :<PORT>               # Verify port is freed
 ```
 
-For additional troubleshooting scenarios, see the [Usage Guide](USAGE_GUIDE.md#10-troubleshooting).
+For additional troubleshooting scenarios, see the [Usage Guide](USAGE_GUIDE.md#11-troubleshooting).
+
+<p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
+---
+
+## Testing
+
+The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 143 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
+
+```bash
+# Run the full test suite (lint + all tests)
+make test
+
+# Run unit tests only (fast, ~2 seconds)
+make test-unit
+
+# Run integration tests only (uses mock socat/ss stubs)
+make test-integration
+
+# Run ShellCheck linting only
+make lint
+
+# Run a specific test file
+bats tests/unit/validation.bats
+
+# Run a specific test by name
+bats tests/integration/dual_stack.bats --filter "stopping TCP preserves UDP"
+```
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `tests/unit/validation.bats` | 68 | All `validate_*` functions, `generate_session_id`, `get_alt_protocol` |
+| `tests/unit/session.bats` | 30 | `session_register`, `session_read_field`, `session_find_by_*`, `session_cleanup_dead` |
+| `tests/integration/lifecycle.bats` | 23 | Launch, PID-file handoff, stop, non-blocking, multi-session, command builders |
+| `tests/integration/dual_stack.bats` | 8 | Protocol-scoped stop, dual-stack launch, port isolation |
+| `tests/integration/capture.bats` | 14 | Capture flag in all builders, stderr redirect, dual-stack capture isolation |
+
+Tests use mock stubs for socat, ss, and openssl so they run without real network operations or dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on writing and running tests.
+
+**CI/CD**: Every push and PR runs the test suite automatically via [GitHub Actions](.github/workflows/test.yml) across a matrix of bash versions (4.4, 5.1, 5.2) and Ubuntu releases (22.04, 24.04). Releases are automated via [tag-triggered workflow](.github/workflows/release.yml).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -797,13 +850,16 @@ Contributions are welcome and appreciated. To contribute:
 
 ### Guidelines
 
+- Run `make test` before submitting — all 143+ tests must pass
+- Run `make lint` — ShellCheck must report no warnings
 - Follow the existing code style: comprehensive function documentation headers (Description, Parameters, Returns), inline comments explaining non-obvious logic, and consistent formatting
 - All user-supplied inputs must pass through the existing validation functions
-- New CLI flags must be added to both the mode argument parser and the corresponding help function
-- Test all operational modes affected by changes
+- New CLI flags must be added to the mode argument parser, command builder, help function, and at least one BATS test
 - Update `CHANGELOG.md` with your changes under an `[Unreleased]` section
 - Read and follow the [Code of Conduct](CODE_OF_CONDUCT.md)
 - Report security vulnerabilities privately per [SECURITY.md](SECURITY.md) — do not open public issues for security bugs
+
+For the complete development guide including environment setup, test architecture, coding standards, and PR process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -814,9 +870,10 @@ Contributions are welcome and appreciated. To contribute:
 | Document | Description |
 |----------|-------------|
 | [README.md](README.md) | Project overview, features, architecture, and quick reference (this file) |
-| [USAGE_GUIDE.md](USAGE_GUIDE.md) | Detailed usage, installation methods (direct, system command, venv), operational scenarios, and troubleshooting |
+| [USAGE_GUIDE.md](USAGE_GUIDE.md) | Detailed usage, installation methods (direct, make install, venv), testing guide, operational scenarios, and troubleshooting |
 | [CHANGELOG.md](CHANGELOG.md) | Complete version history with detailed change descriptions per release |
 | [SECURITY.md](SECURITY.md) | Security policy, vulnerability reporting, threat model, implemented controls, and secure deployment guidelines |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development environment setup, testing guide, coding standards, and PR process |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant code of conduct with responsible use policy for security tooling |
 | [LICENSE](LICENSE) | MIT License with liability disclaimer and dependency notices |
 
