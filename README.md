@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">Socat Network Operations Manager</h1>
   <p align="center">
-    Comprehensive socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
+    A comprehensive socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
   </p>
 </p>
 
@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/actions/workflow/status/Sandler73/socat-manager/test.yml?style=flat-square&label=tests&logo=githubactions&logoColor=white" alt="CI Tests">
-  <img src="https://img.shields.io/badge/BATS-143%2B%20tests-blue?style=flat-square" alt="143+ BATS Tests">
+  <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
+  <img src="https://img.shields.io/badge/BATS-182%20tests-blue?style=flat-square" alt="182 BATS Tests">
 </p>
 
 <p align="center">
@@ -248,7 +248,7 @@ LAUNCHER_PID=9999
 sudo apt-get update && sudo apt-get install -y socat
 
 # 2. Clone or download
-git clone https://github.com/<your-org>/socat-manager.git
+git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
 cd socat-manager
 
 # 3. Install system-wide (or skip this and run directly with ./socat_manager.sh)
@@ -690,7 +690,7 @@ socat-manager/                    # Repository root
 │   └── socat-manager             # System-wide wrapper script
 ├── templates/
 │   └── activate.sh              # Virtual environment activation template
-├── tests/                       # BATS test suite (143 tests)
+├── tests/                       # BATS test suite (182 tests)
 │   ├── helpers/test_helper.bash  # Shared setup/teardown
 │   ├── stubs/                    # Mock binaries (socat, ss, openssl)
 │   ├── fixtures/                 # Test data (session files, port configs)
@@ -803,7 +803,7 @@ For additional troubleshooting scenarios, see the [Usage Guide](USAGE_GUIDE.md#1
 
 ## Testing
 
-The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 143 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
+The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 182 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
 
 ```bash
 # Run the full test suite (lint + all tests)
@@ -853,7 +853,7 @@ Contributions are welcome and appreciated. To contribute:
 
 ### Guidelines
 
-- Run `make test` before submitting — all 143+ tests must pass
+- Run `make test` before submitting — all 182 tests must pass
 - Run `make lint` — ShellCheck must report no warnings
 - Follow the existing code style: comprehensive function documentation headers (Description, Parameters, Returns), inline comments explaining non-obvious logic, and consistent formatting
 - All user-supplied inputs must pass through the existing validation functions
