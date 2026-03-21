@@ -79,7 +79,7 @@ make check-deps
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-org>/socat-manager.git
+git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
 cd socat-manager
 
 # Verify prerequisites
@@ -88,7 +88,7 @@ make check-deps
 # Run the full test suite to confirm everything works
 make test
 
-# You should see: "✓ All tests passed" with 143 tests passing
+# You should see: "✓ All tests passed" with 182 tests passing
 ```
 
 ### Project Structure
@@ -141,7 +141,7 @@ make test
 ```
 
 This runs ShellCheck linting, then all unit tests, then all integration tests.
-All 143 tests must pass before submitting a PR.
+All 182 tests must pass before submitting a PR.
 
 ### Unit Tests Only
 
@@ -377,7 +377,7 @@ Prefixes: `Add:`, `Fix:`, `Change:`, `Remove:`, `Docs:`, `Test:`, `Refactor:`
 
 1. **Fork and branch**: Create a feature branch from `main`
 2. **Implement**: Make your changes following the coding standards above
-3. **Test**: Run `make test` — all 143+ tests must pass
+3. **Test**: Run `make test` — all 182 tests must pass
 4. **Lint**: Run `make lint` — no warnings
 5. **Document**: Update CHANGELOG.md, help text, and README/USAGE_GUIDE as needed
 6. **Commit**: Clear, descriptive commit messages
