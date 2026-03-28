@@ -37,6 +37,10 @@
 
 ---
 
+**[Full Documentation Wiki](https://github.com/Sandler73/Socat-Network-Operations-Manager/wiki)** — detailed guides, architecture, scenarios, and developer reference.
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
