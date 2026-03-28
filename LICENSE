@@ -20,16 +20,249 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- Additional Notices ---
+===============================================================================
+ADDITIONAL TERMS AND NOTICES
+===============================================================================
 
-This software is intended for authorized network operations, security testing,
-research, and educational purposes only. Users are solely responsible for
-ensuring their use of this software complies with all applicable local, state,
-national, and international laws and regulations. The authors and contributors
-assume no liability for misuse or for any damages resulting from the use of
-this software.
+The following additional terms supplement but do not replace the MIT License
+above. In the event of a conflict, the MIT License text shall govern.
 
-This software relies on socat (http://www.dest-unreach.org/socat/) and OpenSSL
-(https://www.openssl.org/), which are distributed under their own respective
-licenses. Users should review and comply with the license terms of all
-dependencies.
+-------------------------------------------------------------------------------
+1. DISCLAIMER OF WARRANTY
+-------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED ON AN "AS IS" AND "AS AVAILABLE" BASIS. THE AUTHORS,
+COPYRIGHT HOLDERS, AND CONTRIBUTORS MAKE NO REPRESENTATIONS OR WARRANTIES OF
+ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING BUT NOT
+LIMITED TO:
+
+  (a) WARRANTIES OF MERCHANTABILITY — No warranty that the Software is of
+      merchantable quality, fit for sale, or suitable for commercial use.
+
+  (b) FITNESS FOR A PARTICULAR PURPOSE — No warranty that the Software will
+      meet your specific requirements, fulfill a particular need, or perform
+      in a manner you expect. This includes, without limitation, use in
+      production environments, critical infrastructure, safety-critical
+      systems, military systems, medical systems, or any environment where
+      software failure could result in harm to persons or property.
+
+  (c) NON-INFRINGEMENT — No warranty that the Software does not infringe
+      upon the intellectual property rights, patents, trademarks, trade
+      secrets, or copyrights of any third party.
+
+  (d) ACCURACY OR COMPLETENESS — No warranty that the Software, its
+      documentation, output, or behavior is accurate, complete, reliable,
+      current, or free of errors, defects, viruses, or harmful components.
+
+  (e) UNINTERRUPTED OR ERROR-FREE OPERATION — No warranty that the Software
+      will operate without interruption, that defects will be corrected, or
+      that the Software is free of bugs, vulnerabilities, or security flaws.
+
+  (f) COMPATIBILITY — No warranty that the Software is compatible with any
+      particular hardware, software, operating system, network configuration,
+      or third-party service, or that it will remain compatible with future
+      versions of its dependencies.
+
+  (g) SECURITY — No warranty that the Software provides adequate security
+      protections, that its security features are sufficient for any
+      particular threat model, that data transmitted through or managed by
+      the Software will be protected from unauthorized access, interception,
+      modification, or disclosure, or that the Software is free from
+      exploitable vulnerabilities.
+
+  (h) DATA INTEGRITY — No warranty that the Software will not cause loss,
+      corruption, or unauthorized modification of data, files, systems,
+      networks, or services.
+
+THE ENTIRE RISK AS TO THE QUALITY, PERFORMANCE, SECURITY, AND RESULTS
+OBTAINED FROM THE SOFTWARE IS WITH YOU. SHOULD THE SOFTWARE PROVE DEFECTIVE,
+YOU ASSUME THE COST OF ALL NECESSARY SERVICING, REPAIR, OR CORRECTION.
+
+-------------------------------------------------------------------------------
+2. LIMITATION OF LIABILITY
+-------------------------------------------------------------------------------
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+AUTHORS, COPYRIGHT HOLDERS, CONTRIBUTORS, OR ANY PARTY WHO MODIFIES AND/OR
+REDISTRIBUTES THE SOFTWARE BE LIABLE FOR ANY OF THE FOLLOWING, WHETHER BASED
+ON WARRANTY, CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY, OR ANY
+OTHER LEGAL THEORY, EVEN IF SUCH PARTY HAS BEEN ADVISED OF THE POSSIBILITY
+OF SUCH DAMAGES:
+
+  (a) DIRECT DAMAGES — Any direct financial loss, cost, or expense arising
+      from the use or inability to use the Software.
+
+  (b) INDIRECT DAMAGES — Any loss or damage that does not arise directly
+      from the Software but is a consequence of a direct loss.
+
+  (c) INCIDENTAL DAMAGES — Any cost incurred as a result of a primary loss
+      caused by the Software, including but not limited to costs of
+      substitute goods, services, or technology.
+
+  (d) CONSEQUENTIAL DAMAGES — Any loss resulting as a secondary consequence
+      of the use or failure of the Software, including but not limited to
+      loss of revenue, profit, business, goodwill, anticipated savings,
+      data, or use.
+
+  (e) SPECIAL DAMAGES — Any loss arising from special circumstances
+      particular to the user that were not foreseeable at the time the
+      Software was obtained.
+
+  (f) PUNITIVE OR EXEMPLARY DAMAGES — Any damages imposed as punishment
+      or to set an example, regardless of the nature of the claim.
+
+  (g) LOSS OF DATA — Any loss, corruption, destruction, or unauthorized
+      disclosure of data, regardless of whether such data was created,
+      stored, processed, transmitted, or managed by the Software.
+
+  (h) SECURITY BREACHES — Any unauthorized access to, interception of,
+      modification of, or disclosure of data or communications facilitated
+      by, passing through, or managed by the Software.
+
+  (i) SYSTEM DAMAGE — Any damage to computer systems, networks, hardware,
+      software, or infrastructure arising from the installation, use,
+      operation, or removal of the Software.
+
+  (j) THIRD-PARTY CLAIMS — Any claims brought by third parties against
+      the user arising from the user's use of the Software.
+
+IF ANY JURISDICTION DOES NOT ALLOW THE EXCLUSION OR LIMITATION OF LIABILITY
+FOR CERTAIN TYPES OF DAMAGES, THE LIABILITY OF THE AUTHORS AND CONTRIBUTORS
+SHALL BE LIMITED TO THE MAXIMUM EXTENT PERMITTED BY THE APPLICABLE LAW OF
+THAT JURISDICTION.
+
+IN NO EVENT SHALL THE TOTAL AGGREGATE LIABILITY OF THE AUTHORS, COPYRIGHT
+HOLDERS, AND CONTRIBUTORS FOR ALL CLAIMS ARISING OUT OF OR RELATED TO THE
+SOFTWARE EXCEED THE AMOUNT PAID BY YOU FOR THE SOFTWARE (WHICH IS ZERO, AS
+THE SOFTWARE IS PROVIDED FREE OF CHARGE).
+
+-------------------------------------------------------------------------------
+3. INDEMNIFICATION
+-------------------------------------------------------------------------------
+
+You agree to indemnify, defend, and hold harmless the authors, copyright
+holders, and contributors from and against any and all claims, demands,
+actions, liabilities, damages, losses, costs, and expenses (including
+reasonable attorneys' fees) arising out of or related to:
+
+  (a) Your use or misuse of the Software;
+  (b) Your violation of any applicable law, regulation, or third-party right
+      in connection with your use of the Software;
+  (c) Any content, data, or traffic transmitted through or processed by the
+      Software under your control;
+  (d) Your modification, redistribution, or sublicensing of the Software;
+  (e) Any claim that your use of the Software caused damage to a third party.
+
+-------------------------------------------------------------------------------
+4. AUTHORIZED USE AND COMPLIANCE
+-------------------------------------------------------------------------------
+
+  (a) INTENDED PURPOSE — This Software is intended for authorized network
+      operations, security testing, security research, systems administration,
+      and educational purposes only.
+
+  (b) LEGAL COMPLIANCE — You are solely responsible for ensuring that your
+      use of the Software complies with all applicable local, state,
+      provincial, national, and international laws and regulations, including
+      but not limited to laws governing computer access, network security,
+      data privacy, data protection, electronic communications, and export
+      controls.
+
+  (c) AUTHORIZATION — You represent and warrant that you have obtained all
+      necessary permissions, authorizations, and consents required to use
+      the Software in your intended manner, including authorization from
+      network owners, system administrators, and data subjects as applicable.
+
+  (d) PROHIBITED USE — The authors and contributors do not authorize and
+      expressly disclaim any responsibility for the use of this Software
+      for any unlawful purpose, including but not limited to: unauthorized
+      access to computer systems or networks, unauthorized interception of
+      communications, denial of service attacks, distribution of malware,
+      or any activity that violates the rights of others.
+
+  (e) NO ENDORSEMENT — Use of this Software does not imply endorsement,
+      sponsorship, or affiliation with any organization, institution, or
+      individual associated with the authors or contributors.
+
+-------------------------------------------------------------------------------
+5. THIRD-PARTY DEPENDENCIES
+-------------------------------------------------------------------------------
+
+This Software relies on third-party software components that are distributed
+under their own respective licenses. The authors and contributors of this
+Software make no representations or warranties regarding third-party
+components. Users are responsible for reviewing and complying with the license
+terms of all dependencies, including but not limited to:
+
+  - socat (http://www.dest-unreach.org/socat/) — GPLv2
+  - OpenSSL (https://www.openssl.org/) — Apache License 2.0
+  - GNU Bash — GPLv3+
+  - GNU Core Utilities — GPLv3+
+  - util-linux (setsid, flock) — GPLv2+
+  - iproute2 (ss) — GPLv2
+
+The inclusion of or reliance on these dependencies does not extend this
+License to those components, nor does it alter the license terms under which
+those components are distributed.
+
+-------------------------------------------------------------------------------
+6. NO OBLIGATION OF SUPPORT
+-------------------------------------------------------------------------------
+
+The authors and contributors are under no obligation to provide technical
+support, maintenance, updates, patches, bug fixes, security advisories, or
+any other form of ongoing service or communication related to the Software.
+Any support provided is at the sole discretion of the authors and may be
+withdrawn at any time without notice.
+
+-------------------------------------------------------------------------------
+7. MODIFICATIONS AND CONTRIBUTIONS
+-------------------------------------------------------------------------------
+
+  (a) MODIFICATIONS — You may modify the Software for your own use. If you
+      distribute modified versions, you must include prominent notice that
+      you have changed the Software, include the date of the changes, and
+      retain this License in its entirety.
+
+  (b) CONTRIBUTIONS — By submitting contributions (including but not limited
+      to code, documentation, bug reports, and feature requests) to this
+      project, you grant the authors a perpetual, worldwide, non-exclusive,
+      royalty-free, irrevocable license to use, reproduce, modify, display,
+      perform, sublicense, and distribute your contributions as part of the
+      Software under the terms of this License.
+
+  (c) NO COMPENSATION — You acknowledge that contributions are made
+      voluntarily and that no compensation, credit beyond standard
+      attribution, or other consideration is owed for contributions.
+
+-------------------------------------------------------------------------------
+8. TERMINATION
+-------------------------------------------------------------------------------
+
+This License is effective until terminated. Your rights under this License
+will terminate automatically without notice if you fail to comply with any
+of its terms. Upon termination, you shall cease all use and distribution of
+the Software and destroy all copies in your possession. Sections 1 through 6
+shall survive any termination of this License.
+
+-------------------------------------------------------------------------------
+9. GOVERNING LAW AND SEVERABILITY
+-------------------------------------------------------------------------------
+
+  (a) SEVERABILITY — If any provision of this License is held to be
+      unenforceable or invalid, that provision shall be enforced to the
+      maximum extent permissible, and the remaining provisions shall
+      continue in full force and effect.
+
+  (b) ENTIRE AGREEMENT — This License constitutes the entire agreement
+      between the parties with respect to the Software and supersedes all
+      prior or contemporaneous understandings, agreements, or
+      representations.
+
+  (c) WAIVER — The failure of any party to enforce any provision of this
+      License shall not constitute a waiver of that party's right to
+      enforce that provision in the future.
+
+===============================================================================
+END OF LICENSE
+===============================================================================
