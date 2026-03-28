@@ -16,7 +16,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/ShellCheck-passing-7B68EE?style=flat-square&logo=gnubash&logoColor=white" alt="ShellCheck">
   <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
-  <img src="https://img.shields.io/badge/BATS-187%20tests-blue?style=flat-square" alt="187 BATS Tests">
+  <img src="https://img.shields.io/badge/BATS-187%20tests-blue?style=flat-square" alt="220 BATS Tests">
 </p>
 
 <p align="center">
@@ -79,8 +79,6 @@
 
 Every launched socat process receives a unique 8-character hex **Session ID**, is placed in its own **process group** via `setsid`, and is tracked in a persistent `.session` metadata file. This enables reliable status queries and clean shutdowns across terminal sessions and script invocations — you can launch a redirector in one terminal, check its status from another, and stop it from a third.
 
-**[Full Documentation Wiki](https://github.com/Sandler73/Socat-Network-Operations-Manager/wiki)** — detailed guides, architecture, scenarios, and developer reference.
-
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
 ---
@@ -95,6 +93,7 @@ Every launched socat process receives a unique 8-character hex **Session ID**, i
 | 🔖 | **Session Tracking** | Unique 8-char hex Session IDs with persistent `.session` metadata files |
 | 🔒 | **Process Isolation** | Each socat process in its own process group via `setsid` with PID-file handoff |
 | 🛡️ | **Protocol-Aware Stop** | Stopping TCP does not affect UDP on the same port, and vice versa |
+| 🖥️ | **Interactive Menu** | Run with no arguments for a guided, menu-driven interface with validation and cancel support |
 | ⚡ | **Non-Blocking Launch** | Script returns to prompt immediately — no terminal blocking |
 | 🔄 | **Watchdog Auto-Restart** | Exponential backoff (1s→60s cap) with configurable max restarts |
 | 📦 | **Batch Operations** | Launch listeners on port lists, ranges, or config files in a single command |
@@ -116,6 +115,7 @@ Every launched socat process receives a unique 8-character hex **Session ID**, i
 - **Protocol-aware stop**: Stopping a TCP session does not affect a UDP session on the same port, and vice versa
 - **Non-blocking launch**: Script returns to prompt immediately after launching sessions — no terminal blocking
 - **Watchdog auto-restart**: Exponential backoff (1s, 2s, 4s... 60s cap) with configurable max restarts
+- **Interactive menu**: No-args launches a full-featured menu with guided input, validation, dependency checking, and cancel support
 - **Batch operations**: Launch listeners on port lists, ranges, or config files in a single command
 
 ### Input Validation and Security
@@ -170,7 +170,7 @@ socat_manager.sh (launcher)
 
 3. **No `$()` subshell**: Session IDs are returned via a global variable (`LAUNCH_SID`) rather than command substitution, preventing stdout file descriptor inheritance that would block the terminal.
 
-4. **`disown` equivalent**: All stdout/stderr are redirected before `exec`, so no file descriptors leak back to the launching terminal.
+4. **Full detachment via `setsid`**: The process runs in a new session and process group, so it's not in the parent shell's job table. Combined with `&>/dev/null` redirections, no file descriptors or job references leak back to the launching terminal.
 
 ### Session File Format
 
@@ -269,19 +269,20 @@ cd socat-manager
 # 3. Install system-wide (or skip this and run directly with ./socat_manager.sh)
 sudo make install
 
-# 4. Start a TCP listener on port 8080
-socat-manager listen --port 8080
+# 4. Launch the interactive menu (no arguments)
+sudo socat-manager
 
-# 5. Check session status
-socat-manager status
-
-# 6. Stop everything
-socat-manager stop --all
+# Or use CLI mode directly:
+socat-manager listen --port 8080    # Start a TCP listener
+socat-manager status                # Check session status
+socat-manager stop --all            # Stop everything
 ```
 
-**Alternative**: Run directly without installing — `chmod +x socat_manager.sh && ./socat_manager.sh listen --port 8080`
+**Interactive menu**: Running with no arguments launches a guided, menu-driven interface with validated input and cancel support (type `q` at any prompt to return to the main menu). Also accessible via `socat-manager menu`.
 
-For detailed installation options including `make install`, user-local install, and virtual environment setup, see the [Usage Guide](USAGE_GUIDE.md).
+**Direct CLI**: All commands work exactly as shown — `socat-manager listen --port 8080`, `socat-manager status`, etc. Full CLI reference in the [Usage Guide](USAGE_GUIDE.md).
+
+**Alternative**: Run directly without installing — `chmod +x socat_manager.sh && sudo ./socat_manager.sh`
 
 ### Mode Examples
 
@@ -758,7 +759,7 @@ socat-manager/                    # Repository root
 │   └── socat-manager             # System-wide wrapper script
 ├── templates/
 │   └── activate.sh              # Virtual environment activation template
-├── tests/                       # BATS test suite (187 tests)
+├── tests/                       # BATS test suite (220 tests)
 │   ├── helpers/test_helper.bash  # Shared setup/teardown
 │   ├── stubs/                    # Mock binaries (socat, ss, openssl)
 │   ├── fixtures/                 # Test data (session files, port configs)
@@ -871,7 +872,7 @@ For additional troubleshooting scenarios, see the [Usage Guide](USAGE_GUIDE.md#1
 
 ## Testing
 
-The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 187 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
+The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 220 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
 
 ```bash
 # Run the full test suite (lint + all tests)
@@ -921,7 +922,7 @@ Contributions are welcome and appreciated. To contribute:
 
 ### Guidelines
 
-- Run `make test` before submitting — all 187 tests must pass
+- Run `make test` before submitting — all 220 tests must pass
 - Run `make lint` — ShellCheck must report no warnings
 - Follow the existing code style: comprehensive function documentation headers (Description, Parameters, Returns), inline comments explaining non-obvious logic, and consistent formatting
 - All user-supplied inputs must pass through the existing validation functions
@@ -987,7 +988,7 @@ See [CHANGELOG.md](CHANGELOG.md) for complete details on every change.
 Distributed under the MIT License. See [LICENSE](LICENSE) for full terms.
 
 ```
-MIT License · Copyright (c) 2026 Sandler73
+MIT License · Copyright (c) 2026 socat_manager Contributors
 ```
 
 This software is intended for authorized network operations, security testing, research, and educational purposes only. Users are solely responsible for ensuring their use complies with all applicable laws and regulations.
@@ -1018,3 +1019,4 @@ This software is intended for authorized network operations, security testing, r
 </p>
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
