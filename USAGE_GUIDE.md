@@ -250,16 +250,18 @@ install directory (which may contain runtime data).
 
 ```bash
 make help             # Show all targets with descriptions
-make check-deps       # Verify prerequisites (socat, bash, bats, shellcheck)
-make lint             # Run ShellCheck static analysis
+make check-deps       # Verify prerequisites (socat, bash, bats, shellcheck, flock)
+make lint             # Run ShellCheck on all bash files (script, bin, stubs, helpers)
 make test             # Run full test suite (lint + BATS)
 make test-unit        # Run unit tests only (fast)
 make test-integration # Run integration tests only
+make test-smoke       # Quick smoke test (menu, help, version, status — no BATS)
 make install          # Install system-wide
 make uninstall        # Remove installation
+make verify           # Post-install verification (includes menu check)
 make venv             # Create isolated virtual environment
-make dist             # Build release tarballs + SHA256 checksums
-make clean            # Remove build artifacts
+make dist             # Build release tarballs + SHA256 checksums (includes wiki, .github)
+make clean            # Remove build artifacts, test temps, lock files
 ```
 
 #### Method B: Symlink to /usr/local/bin
@@ -584,6 +586,26 @@ deactivate_socat
 # Remove the venv entirely
 rm -rf /opt/engagements/project-alpha/socat-env
 ```
+
+---
+
+## Interactive Menu
+
+Running the script with no arguments launches the interactive menu:
+
+```bash
+socat-manager          # no arguments → interactive menu
+socat-manager menu     # explicit menu mode
+```
+
+The menu provides guided input for every operational mode with:
+
+- Validated input at every prompt (ports, hostnames, protocols, session names)
+- Cancel support: type `q`, `quit`, `cancel`, or `back` at any prompt
+- Confirmation before execution: shows the CLI command and asks before running
+- Dependency check: verifies all required and recommended system dependencies
+
+CLI mode remains fully functional. All commands documented below work unchanged.
 
 ---
 
@@ -1203,7 +1225,7 @@ make test
 ```
 
 This runs three stages in order: ShellCheck linting, unit tests, then
-integration tests. All 182 tests must pass. Output looks like:
+integration tests. All 220 tests must pass. Output looks like:
 
 ```
   Running ShellCheck...
