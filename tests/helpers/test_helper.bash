@@ -209,7 +209,7 @@ create_mock_session() {
     local session_file="${SESSION_DIR}/${sid}.session"
 
     cat > "${session_file}" << EOF
-# socat_manager session file v2.2 (test fixture)
+# socat_manager session file v2.3 (test fixture)
 SESSION_ID=${sid}
 SESSION_NAME=${name}
 PID=${pid}
