@@ -16,7 +16,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/ShellCheck-passing-7B68EE?style=flat-square&logo=gnubash&logoColor=white" alt="ShellCheck">
   <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
-  <img src="https://img.shields.io/badge/BATS-187%20tests-blue?style=flat-square" alt="220 BATS Tests">
+  <img src="https://img.shields.io/badge/BATS-220%20tests-blue?style=flat-square" alt="220 BATS Tests">
 </p>
 
 <p align="center">
