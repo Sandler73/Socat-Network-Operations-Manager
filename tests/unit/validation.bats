@@ -436,3 +436,157 @@ teardown() {
     run get_alt_protocol "udp6"
     [ "$output" = "tcp6" ]
 }
+
+# =====================================================================
+# validate_socat_opts (C-2 audit remediation)
+# Whitelist: [a-zA-Z0-9=,.:/_-]
+# =====================================================================
+
+@test "validate_socat_opts: accepts valid socat options" {
+    run validate_socat_opts "reuseaddr,fork,backlog=128"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_socat_opts: accepts options with equals and dots" {
+    run validate_socat_opts "bind=192.168.1.10,keepalive"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_socat_opts: accepts options with colons and slashes" {
+    run validate_socat_opts "cert=/path/to/cert.pem"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_socat_opts: accepts options with hyphens and underscores" {
+    run validate_socat_opts "tcp-keepidle=60,so_keepalive"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_socat_opts: accepts empty string (no extra opts)" {
+    run validate_socat_opts ""
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_socat_opts: rejects semicolon (command injection)" {
+    run validate_socat_opts "reuseaddr;rm -rf /"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects pipe (command injection)" {
+    run validate_socat_opts "fork|cat /etc/passwd"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects backtick (command injection)" {
+    run validate_socat_opts 'fork,`whoami`'
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects dollar sign (variable expansion)" {
+    run validate_socat_opts 'fork,$HOME'
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects parentheses (subshell)" {
+    run validate_socat_opts "fork,(echo pwned)"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects spaces" {
+    run validate_socat_opts "fork reuseaddr"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_socat_opts: rejects angle brackets (redirection)" {
+    run validate_socat_opts "fork,>/tmp/evil"
+    [ "$status" -eq 1 ]
+}
+
+# =====================================================================
+# validate_session_name (C-4 audit remediation)
+# Whitelist: [a-zA-Z0-9._-], max 64 characters
+# =====================================================================
+
+@test "validate_session_name: accepts alphanumeric name" {
+    run validate_session_name "mylistener01"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_session_name: accepts name with hyphens" {
+    run validate_session_name "listen-tcp4-8080"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_session_name: accepts name with underscores and dots" {
+    run validate_session_name "web_server.prod"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_session_name: accepts maximum length name (64 chars)" {
+    local name
+    name="$(printf 'a%.0s' $(seq 1 64))"
+    run validate_session_name "${name}"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_session_name: rejects empty name" {
+    run validate_session_name ""
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name exceeding 64 characters" {
+    local name
+    name="$(printf 'a%.0s' $(seq 1 65))"
+    run validate_session_name "${name}"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name with spaces" {
+    run validate_session_name "my listener"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name with semicolon (injection)" {
+    run validate_session_name "test;rm -rf /"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name with slash (path traversal)" {
+    run validate_session_name "../../../etc/passwd"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name with equals (session file corruption)" {
+    run validate_session_name "name=injected"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_session_name: rejects name with newline attempt" {
+    run validate_session_name $'name\nPID=99999'
+    [ "$status" -eq 1 ]
+}
+
+# =====================================================================
+# Enhanced IPv6 validation (M-6 audit remediation)
+# Added: length check (2-39), colon count (max 7)
+# =====================================================================
+
+@test "validate_hostname: accepts abbreviated IPv6" {
+    run validate_hostname "fe80::1"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_hostname: rejects IPv6 with too many colons (8+)" {
+    run validate_hostname "1:2:3:4:5:6:7:8:9"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_hostname: rejects IPv6 exceeding max length (40+ chars)" {
+    run validate_hostname "2001:0db8:85a3:0000:0000:8a2e:0370:7334a"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_hostname: rejects degenerate colons-only string" {
+    run validate_hostname "::::::::"
+    [ "$status" -eq 1 ]
+}
