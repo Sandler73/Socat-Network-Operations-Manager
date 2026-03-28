@@ -268,9 +268,14 @@ All functions that accept external input validate before processing:
   command strings.
 - The `build_socat_*_cmd` functions construct commands from validated components
   only.
-- No user-supplied strings are passed to `eval` without prior validation.
-- Session file parsing uses `grep` + `cut` (not `source` or `eval`) to prevent
-  code execution from tampered session files.
+- All `eval` calls have been eliminated from the script (audit remediation C-1).
+- `--socat-opts` input validated via `validate_socat_opts()` whitelist:
+  `[a-zA-Z0-9=,.:/_-]` only (audit remediation C-2).
+- `--name` input validated via `validate_session_name()` whitelist:
+  `[a-zA-Z0-9._-]`, max 64 characters (audit remediation C-4).
+- `stop --pid` validated as numeric-only before use (audit remediation H-3).
+- Session file parsing uses `awk` exact-match (not `grep` regex, not `source`
+  or `eval`) to prevent code execution from tampered session files.
 
 ### Path Traversal Prevention (CWE-22)
 
@@ -296,20 +301,22 @@ All functions that accept external input validate before processing:
 
 ## Known Limitations and Accepted Risks
 
-### 1. `eval` Usage for Command Execution
+### 1. Command Execution Model
 
-The script uses `eval` to execute constructed socat command strings. While all
-interpolated values pass through input validation, `eval` inherently carries
+As of v2.3.0 (post-audit), all `eval` calls have been eliminated from the
+script. The watchdog uses `bash -c` and the main launch path uses
+`setsid bash -c` with PID-file handoff. While `bash -c` still interprets
+strings, all inputs are validated through whitelist functions before reaching
+command construction. The `--socat-opts` parameter previously carried
 risk if validation is bypassed or a new code path introduces unvalidated input.
 
 **Mitigation**: All inputs validated before command string construction.
 Validation functions are called at the mode handler level before the builder
-functions. The `--socat-opts` parameter (listen mode) is the highest-risk
-input as it passes arbitrary socat address options; users should exercise
-caution with this parameter.
+functions. The `--socat-opts` parameter (listen mode) accepts arbitrary socat
+address options but is validated via `validate_socat_opts()` whitelist.
 
-**Future improvement**: Consider replacing `eval` with array-based command
-execution (`"${cmd_array[@]}"`) for defense in depth.
+**Defense in depth**: Consider moving to array-based command execution
+(`"${cmd_array[@]}"`) to eliminate string interpretation entirely.
 
 ### 2. Capture Logs Contain Sensitive Data
 
