@@ -49,3 +49,18 @@ disable=SC1090
 # Rationale: Same as SC1090 — test helpers source scripts from runtime-
 # determined paths. The source targets are validated by the test framework.
 disable=SC1091
+
+# ---------------------------------------------------------------------------
+# Documented but NOT suppressed (handled inline or accepted as info-level)
+# ---------------------------------------------------------------------------
+
+# SC2015: Note that A && B || C is not if-then-else.
+# Rationale: NOT disabled globally. The script uses `A && B || true` patterns
+# intentionally for capture log creation (touch && chmod 600 || true) and
+# arithmetic guards ((count++) || true). The `|| true` is a safety fallback,
+# not an else branch. ShellCheck reports this at info level only.
+# No action needed.
+
+# SC2034 note: `local -n` (nameref) variables in _menu_collect_common_flags
+# appear unused to ShellCheck but are accessed via nameref indirection.
+# Already covered by the SC2034 disable above.
