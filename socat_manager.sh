@@ -2,14 +2,12 @@
 #======================================================================
 # SCRIPT     : socat_manager.sh
 #======================================================================
-# Name       : Socat Network Operations Manager
-#
-# Synopsis   : A comprehensive socat-based network listener, forwarder,
+# Synopsis   : Comprehensive socat-based network listener, forwarder,
 #              tunneler, and traffic redirector with reliability and
 #              multi-session management.
 #
 # Description: Provides a unified interface for socat network operations
-#              across six operational modes:
+#              across seven operational modes:
 #
 #              listen   - Start a single TCP/UDP listener on a port
 #              batch    - Start multiple listeners from port list/range
@@ -30,6 +28,11 @@
 #
 #              All operational modes support --capture for verbose hex
 #              dump traffic logging via socat -v.
+#
+#              When invoked with no arguments, the script launches an
+#              interactive menu-driven interface with guided input,
+#              validation, and cancel/escape support for all modes.
+#              CLI mode remains fully functional for scripted use.
 #
 # Notes      : - Requires socat installed and in PATH
 #              - Root/sudo required for privileged ports (<1024)
@@ -98,8 +101,13 @@
 #   # Stop everything
 #   bash socat_manager.sh stop --all
 #
+#   # Launch interactive menu
+#   bash socat_manager.sh
+#   bash socat_manager.sh menu
+#
 # Version    : 2.3.0
-# Dependencies: socat, openssl (for tunnel mode), ss/netstat (for status)
+# Dependencies: socat, openssl (for tunnel mode), ss/netstat (for status),
+#              setsid (util-linux), flock (util-linux, for session locking)
 #======================================================================
 
 set -euo pipefail
@@ -124,19 +132,20 @@ readonly CERT_DIR="${SCRIPT_DIR}/certs"
 readonly EXEC_TIMESTAMP="$(date '+%Y-%m-%dT%H-%M-%S')"
 
 # Correlation ID for this execution (first 8 chars of a pseudo-UUID)
-readonly CORRELATION_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null | cut -c1-8 || date +%s%N | sha256sum | cut -c1-8)"
+# Uses cat with error suppression; fallback to timestamp hash if /proc unavailable
+readonly CORRELATION_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-8 || date +%s%N | sha256sum | cut -c1-8)"
 
 # Master log for this execution
 readonly MASTER_LOG="${LOG_DIR}/${SCRIPT_NAME}-${EXEC_TIMESTAMP}.log"
 
-# Default values
-DEFAULT_PROTOCOL="tcp4"            # Default to IPv4 TCP
-DEFAULT_BACKLOG=128                # socat listen backlog
-DEFAULT_TIMEOUT=0                  # 0 = no timeout (persistent)
-DEFAULT_MAX_CHILDREN=256           # Max concurrent forked connections
-DEFAULT_WATCHDOG_INTERVAL=5        # Seconds between watchdog health checks
-DEFAULT_WATCHDOG_MAX_RESTARTS=10   # Max auto-restarts before giving up
-DEFAULT_BUFFER_SIZE=8192           # socat transfer buffer size (bytes)
+# Default values (readonly to prevent accidental modification)
+readonly DEFAULT_PROTOCOL="tcp4"            # Default to IPv4 TCP
+readonly DEFAULT_BACKLOG=128                # socat listen backlog
+readonly DEFAULT_WATCHDOG_INTERVAL=5        # Seconds between watchdog health checks
+readonly DEFAULT_WATCHDOG_MAX_RESTARTS=10   # Max auto-restarts before giving up
+
+# Maximum concurrent sessions to prevent resource exhaustion
+readonly MAX_SESSIONS=256
 
 # Stop timing constants
 readonly STOP_GRACE_SECONDS=5      # Seconds to wait after SIGTERM before SIGKILL
@@ -185,14 +194,28 @@ readonly SYM_SESSION="■"
 
 VERBOSE_MODE=false  # Set by --verbose / -v flag
 
+# Terminal detection: disable color codes when stderr is not a terminal
+# (e.g., when output is piped to a file or another command)
+USE_COLOR=true
+if [[ ! -t 2 ]]; then
+    USE_COLOR=false
+fi
+
+# Guard: tracks whether directories have been initialized this execution
+_DIRS_ENSURED=false
+
 # Function: _ensure_dirs
 # Description: Create required directory structure if missing.
 #              Sets restrictive permissions on session directory
 #              to protect PID/session metadata from unauthorized access.
+#              Uses a guard variable to avoid redundant mkdir/chmod
+#              system calls on every log write.
 _ensure_dirs() {
+    [[ "${_DIRS_ENSURED}" == true ]] && return 0
     mkdir -p "${LOG_DIR}" "${SESSION_DIR}" "${CONF_DIR}" "${CERT_DIR}" 2>/dev/null || true
     # Restrict session directory permissions (session files contain PIDs and commands)
     chmod 700 "${SESSION_DIR}" 2>/dev/null || true
+    _DIRS_ENSURED=true
 }
 
 # Function: _log_write
@@ -236,7 +259,11 @@ _log_write() {
             ERROR)    color="${CLR_RED}";     symbol="${SYM_FAIL}" ;;
             CRITICAL) color="${CLR_RED}${CLR_BOLD}"; symbol="${SYM_FAIL}" ;;
         esac
-        echo -e "  ${color}[${symbol}]${CLR_RESET} ${message}" >&2
+        if [[ "${USE_COLOR}" == true ]]; then
+            echo -e "  ${color}[${symbol}]${CLR_RESET} ${message}" >&2
+        else
+            echo "  [${symbol}] ${message}" >&2
+        fi
     fi
 }
 
@@ -445,8 +472,21 @@ validate_hostname() {
         return 0
     fi
 
-    # IPv6 validation (basic - accepts standard and compressed forms)
+    # IPv6 validation (accepts standard and compressed forms)
+    # Length: minimum 2 chars (::), maximum 39 chars (full expanded)
+    # Max 7 colons (8 groups separated by 7 colons)
     if [[ "${host}" =~ ^[0-9a-fA-F:]+$ ]] && [[ "${host}" == *":"* ]]; then
+        local _ipv6_len=${#host}
+        if (( _ipv6_len < 2 || _ipv6_len > 39 )); then
+            log_error "Invalid IPv6 address: '${host}' (length ${_ipv6_len}, expected 2-39)" "validation"
+            return 1
+        fi
+        # Count colons — max 7 in a valid IPv6 address
+        local _colon_count="${host//[^:]/}"
+        if (( ${#_colon_count} > 7 )); then
+            log_error "Invalid IPv6 address: '${host}' (too many colons)" "validation"
+            return 1
+        fi
         return 0
     fi
 
@@ -506,6 +546,66 @@ validate_file_path() {
     # Block command injection characters in paths
     if [[ "${path}" =~ [\;\|\&\$\`] ]]; then
         log_error "Forbidden characters in path '${path}'" "validation"
+        return 1
+    fi
+
+    return 0
+}
+
+
+# Function: validate_socat_opts
+# Description: Validate user-provided socat address options for safety.
+#              Allows only characters valid in socat address options:
+#              alphanumeric, equals, commas, dots, colons, hyphens,
+#              forward slashes, and underscores.
+#              Blocks all shell metacharacters to prevent command injection
+#              through the --socat-opts flag, which flows into bash -c
+#              command strings.
+# Parameters:
+#   $1 - socat options string to validate
+# Returns: 0 if safe, 1 if contains dangerous characters
+validate_socat_opts() {
+    local opts="${1:-}"
+
+    if [[ -z "${opts}" ]]; then
+        return 0  # Empty is valid (no extra opts)
+    fi
+
+    # Whitelist: alphanumeric, equals, comma, dot, colon, hyphen, slash, underscore
+    # Reject everything else — especially shell metacharacters
+    if [[ "${opts}" =~ [^a-zA-Z0-9=,.:/_-] ]]; then
+        log_error "Forbidden characters in socat options '${opts}'. Allowed: alphanumeric, = , . : / _ -" "validation"
+        return 1
+    fi
+
+    return 0
+}
+
+# Function: validate_session_name
+# Description: Validate a user-provided session name for safety.
+#              Allows only alphanumeric characters, hyphens, underscores,
+#              and dots. Maximum length 64 characters. Prevents injection
+#              into session files (SESSION_NAME=<value>) and log messages.
+# Parameters:
+#   $1 - Session name to validate
+# Returns: 0 if valid, 1 if invalid
+validate_session_name() {
+    local name="${1:-}"
+
+    if [[ -z "${name}" ]]; then
+        log_error "Empty session name" "validation"
+        return 1
+    fi
+
+    # Maximum length check
+    if (( ${#name} > 64 )); then
+        log_error "Session name too long (${#name} chars, max 64): '${name}'" "validation"
+        return 1
+    fi
+
+    # Whitelist: alphanumeric, hyphens, underscores, dots
+    if [[ "${name}" =~ [^a-zA-Z0-9._-] ]]; then
+        log_error "Invalid characters in session name '${name}'. Allowed: alphanumeric, . _ -" "validation"
         return 1
     fi
 
@@ -616,6 +716,32 @@ generate_session_id() {
 #   LAUNCHER_PID=<original-script-pid>
 #======================================================================
 
+# Advisory lock file for operations that iterate over all session files.
+# Prevents TOCTOU race conditions when multiple script invocations run
+# concurrently (e.g., stop --all while another instance is launching).
+readonly SESSION_LOCK="${SESSION_DIR}/.lock"
+
+# Function: _session_lock
+# Description: Acquire an advisory lock on the session directory using
+#              flock. Non-blocking: returns 1 if lock is held by another
+#              process. Uses file descriptor 200 (reserved for locking).
+#              The lock is automatically released when the fd closes.
+# Returns: 0 if lock acquired, 1 if busy
+_session_lock() {
+    exec 200>"${SESSION_LOCK}" 2>/dev/null || return 1
+    flock -n 200 2>/dev/null || {
+        log_debug "Session directory locked by another process" "session"
+        return 1
+    }
+    return 0
+}
+
+# Function: _session_unlock
+# Description: Release the advisory session lock by closing fd 200.
+_session_unlock() {
+    exec 200>&- 2>/dev/null || true
+}
+
 # Function: session_register
 # Description: Register a new socat session by writing a session file
 #              with comprehensive metadata. Uses the session ID as the
@@ -648,7 +774,7 @@ session_register() {
 
     # Write structured session metadata using heredoc
     cat > "${session_file}" << EOF
-# socat_manager session file v2.2
+# socat_manager session file v2.3
 # Generated: $(date '+%Y-%m-%d %H:%M:%S')
 SESSION_ID=${sid}
 SESSION_NAME=${name}
@@ -703,8 +829,11 @@ session_read_field() {
         return 0
     fi
 
-    # Extract field value; head -1 handles any duplicate entries safely
-    grep "^${field}=" "${session_file}" 2>/dev/null | head -1 | cut -d= -f2-
+    # Extract field value using awk for exact key match (no regex interpretation).
+    # awk splits on first "=" and prints everything after it.
+    # This prevents grep regex metacharacters in field names from matching
+    # unintended lines in the session file.
+    awk -F= -v key="${field}" '$1 == key {print substr($0, length(key)+2); exit}' "${session_file}" 2>/dev/null
 }
 
 # Function: session_find_by_name
@@ -1005,6 +1134,9 @@ session_detail() {
 #              prevent premature cleanup. This is critical for dual-stack:
 #              killing one protocol must not cause cleanup of the other.
 session_cleanup_dead() {
+    # Acquire advisory lock to prevent TOCTOU with concurrent stop/launch
+    _session_lock || log_debug "Proceeding without lock (advisory)" "session"
+
     local cleaned=0
     for sf in "${SESSION_DIR}"/*.session; do
         [[ ! -f "${sf}" ]] && continue
@@ -1098,6 +1230,16 @@ launch_socat_session() {
 
     # Reset global return value
     LAUNCH_SID=""
+
+    # Check maximum session count to prevent resource exhaustion
+    local _active_count=0
+    for _sf in "${SESSION_DIR}"/*.session; do
+        [[ -f "${_sf}" ]] && ((_active_count++)) || true
+    done
+    if (( _active_count >= MAX_SESSIONS )); then
+        log_error "Maximum session count (${MAX_SESSIONS}) reached. Stop existing sessions first." "launch"
+        return 1
+    fi
 
     # Generate unique session ID
     local sid
@@ -1571,8 +1713,13 @@ watchdog_loop() {
     log_info "Watchdog started for '${session_name}' [${session_id}] (max ${max_restarts} restarts)" "watchdog"
 
     while (( restart_count <= max_restarts )); do
-        # Launch the socat process
-        eval "${socat_cmd}" &
+        # Launch the socat process via bash -c (not eval, which enables
+        # arbitrary code execution if socat_cmd contains shell metacharacters).
+        # NOTE: This tracks PID via $! which is less reliable than the
+        # setsid + PID-file handoff used by launch_socat_session. A full
+        # refactor to call launch_socat_session on each restart is the
+        # recommended long-term improvement.
+        bash -c "${socat_cmd}" &
         local pid=$!
 
         log_info "Process launched: PID ${pid} (restart #${restart_count})" "watchdog"
@@ -1633,12 +1780,16 @@ mode_listen() {
             -p|--port)       port="${2:?--port requires a value}"; shift 2 ;;
             --proto)         proto="${2:?--proto requires a value}"; shift 2 ;;
             --bind)          bind_addr="${2:?--bind requires a value}"; shift 2 ;;
-            --name)          session_name="${2:?--name requires a value}"; shift 2 ;;
+            --name)          session_name="${2:?--name requires a value}"
+                             validate_session_name "${session_name}" || exit 1
+                             shift 2 ;;
             --logfile)       logfile="${2:?--logfile requires a value}"; shift 2 ;;
             --capture)       capture=true; shift ;;
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
-            --socat-opts)    extra_opts="${2:?--socat-opts requires a value}"; shift 2 ;;
+            --socat-opts)    extra_opts="${2:?--socat-opts requires a value}"
+                             validate_socat_opts "${extra_opts}" || exit 1
+                             shift 2 ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
             -h|--help)       show_listen_help; exit 0 ;;
             *)               log_error "Unknown listen option: ${1}"; exit 1 ;;
@@ -1716,6 +1867,7 @@ mode_listen() {
         if check_port_available "${port}" "${alt_proto}"; then
             local alt_capture_logfile=""
             [[ "${capture}" == true ]] && alt_capture_logfile="${LOG_DIR}/capture-${alt_proto}-${port}-${EXEC_TIMESTAMP}.log"
+            [[ -n "${alt_capture_logfile}" ]] && { touch "${alt_capture_logfile}" && chmod 600 "${alt_capture_logfile}" 2>/dev/null || true; }
             local alt_stderr=""
             [[ "${capture}" == true && -n "${alt_capture_logfile}" ]] && alt_stderr="${alt_capture_logfile}"
 
@@ -1854,6 +2006,7 @@ mode_batch() {
         local stderr_file=""
         if [[ "${capture}" == true ]]; then
             capture_logfile="${LOG_DIR}/capture-${proto}-${port}-${EXEC_TIMESTAMP}.log"
+            touch "${capture_logfile}" && chmod 600 "${capture_logfile}" 2>/dev/null || true
             stderr_file="${capture_logfile}"
         fi
 
@@ -1879,6 +2032,7 @@ mode_batch() {
                 local alt_stderr=""
                 if [[ "${capture}" == true ]]; then
                     alt_capture_logfile="${LOG_DIR}/capture-${alt_proto}-${port}-${EXEC_TIMESTAMP}.log"
+                    touch "${alt_capture_logfile}" && chmod 600 "${alt_capture_logfile}" 2>/dev/null || true
                     alt_stderr="${alt_capture_logfile}"
                 fi
                 local alt_cmd
@@ -1927,7 +2081,9 @@ mode_forward() {
             --rport)         rport="${2:?--rport requires a value}"; shift 2 ;;
             --proto)         proto="${2:?--proto requires a value}"; shift 2 ;;
             --remote-proto)  remote_proto="${2:?--remote-proto requires a value}"; shift 2 ;;
-            --name)          session_name="${2:?--name requires a value}"; shift 2 ;;
+            --name)          session_name="${2:?--name requires a value}"
+                             validate_session_name "${session_name}" || exit 1
+                             shift 2 ;;
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             --capture)       capture=true; shift ;;
@@ -1973,6 +2129,7 @@ mode_forward() {
     # Set up capture log if --capture is enabled
     if [[ "${capture}" == true ]]; then
         capture_logfile="${LOG_DIR}/capture-${proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+        touch "${capture_logfile}" && chmod 600 "${capture_logfile}" 2>/dev/null || true
     fi
 
     # Display configuration
@@ -2012,6 +2169,7 @@ mode_forward() {
             local alt_stderr=""
             if [[ "${capture}" == true ]]; then
                 alt_capture_logfile="${LOG_DIR}/capture-${alt_proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+                touch "${alt_capture_logfile}" && chmod 600 "${alt_capture_logfile}" 2>/dev/null || true
                 alt_stderr="${alt_capture_logfile}"
             fi
 
@@ -2060,7 +2218,9 @@ mode_tunnel() {
             --cert)          cert="${2:?--cert requires a value}"; shift 2 ;;
             --key)           key="${2:?--key requires a value}"; shift 2 ;;
             --cn)            cn="${2:?--cn requires a value}"; shift 2 ;;
-            --name)          session_name="${2:?--name requires a value}"; shift 2 ;;
+            --name)          session_name="${2:?--name requires a value}"
+                             validate_session_name "${session_name}" || exit 1
+                             shift 2 ;;
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             --proto)         
@@ -2134,6 +2294,7 @@ mode_tunnel() {
     # Set up capture log if --capture is enabled
     if [[ "${capture}" == true ]]; then
         [[ -z "${capture_logfile}" ]] && capture_logfile="${LOG_DIR}/capture-tls-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+        touch "${capture_logfile}" && chmod 600 "${capture_logfile}" 2>/dev/null || true
     fi
 
     # Display configuration
@@ -2173,6 +2334,7 @@ mode_tunnel() {
             local udp_stderr=""
             if [[ "${capture}" == true ]]; then
                 udp_capture_logfile="${LOG_DIR}/capture-udp4-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+                touch "${udp_capture_logfile}" && chmod 600 "${udp_capture_logfile}" 2>/dev/null || true
                 udp_stderr="${udp_capture_logfile}"
             fi
 
@@ -2220,7 +2382,9 @@ mode_redirect() {
             --proto)         proto="${2:?--proto requires a value}"; shift 2 ;;
             --capture)       capture=true; shift ;;
             --logfile)       logfile="${2:?--logfile requires a value}"; shift 2 ;;
-            --name)          session_name="${2:?--name requires a value}"; shift 2 ;;
+            --name)          session_name="${2:?--name requires a value}"
+                             validate_session_name "${session_name}" || exit 1
+                             shift 2 ;;
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
@@ -2253,6 +2417,7 @@ mode_redirect() {
     # Set up capture log if requested
     if [[ "${capture}" == true ]]; then
         [[ -z "${logfile}" ]] && logfile="${LOG_DIR}/capture-${proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+        touch "${logfile}" && chmod 600 "${logfile}" 2>/dev/null || true
     fi
 
     # Build command using protocol-aware builder
@@ -2293,6 +2458,7 @@ mode_redirect() {
             local alt_logfile=""
             if [[ "${capture}" == true ]]; then
                 alt_logfile="${LOG_DIR}/capture-${alt_proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+                touch "${alt_logfile}" && chmod 600 "${alt_logfile}" 2>/dev/null || true
             fi
             local alt_cmd
             alt_cmd=$(build_socat_redirect_cmd "${alt_proto}" "${lport}" "${rhost}" "${rport}" "${capture}")
@@ -2571,6 +2737,11 @@ mode_stop() {
 
     elif [[ -n "${stop_pid}" ]]; then
         # ─── Stop by PID ───
+        # Validate PID is numeric only (prevents injection into kill calls)
+        if ! [[ "${stop_pid}" =~ ^[0-9]+$ ]]; then
+            log_error "Invalid PID '${stop_pid}': must be a number" "stop"
+            exit 1
+        fi
         local pid_sids
         pid_sids="$(session_find_by_pid "${stop_pid}")"
 
@@ -2860,6 +3031,10 @@ _cleanup_orphaned_socat() {
 # setsid-launched sessions survive script exit by design.
 #======================================================================
 
+# Idempotent guard: prevents double-execution when a signal triggers
+# both the signal trap and the EXIT trap.
+_CLEANUP_DONE=false
+
 # Function: cleanup_handler
 # Description: Trap handler for graceful shutdown. Stops all child
 #              processes of THIS script invocation only. Sessions
@@ -2868,6 +3043,10 @@ _cleanup_orphaned_socat() {
 # Parameters:
 #   $1 - Signal name (set by trap)
 cleanup_handler() {
+    # Idempotent guard: prevent double-execution
+    [[ "${_CLEANUP_DONE}" == true ]] && return 0
+    _CLEANUP_DONE=true
+
     local sig="${1:-UNKNOWN}"
     echo "" >&2
     log_warning "Caught signal ${sig} - shutting down..." "signal"
@@ -2890,6 +3069,11 @@ cleanup_handler() {
 trap 'cleanup_handler INT' INT
 trap 'cleanup_handler TERM' TERM
 trap 'cleanup_handler HUP' HUP
+# NOTE: No EXIT trap. Sessions are launched under setsid in separate
+# process groups and are designed to survive script exit. The EXIT trap
+# was firing on every normal exit (help, status, stop), producing false
+# "shutting down" warnings and killing child processes unnecessarily.
+# Signal traps (INT/TERM/HUP) handle the cases where cleanup is needed.
 
 #======================================================================
 # DEPENDENCY CHECK
@@ -3359,6 +3543,853 @@ migrate_legacy_sessions() {
 }
 
 #======================================================================
+# INTERACTIVE MENU SYSTEM
+# Full-featured menu-driven interface for all socat_manager operations.
+# Provides validated, guided input for every mode and option.
+# Graceful error recovery: invalid inputs prompt retry, never crash.
+#======================================================================
+
+# ─── Menu Utilities ──────────────────────────────────────────────────
+
+# Return code convention:
+#   0 = success (value captured via stdout)
+#   1 = validation failure (retry automatically)
+#   2 = user cancelled (typed q/quit/cancel/back)
+# All mode submenus check for return code 2 to abort and return to root.
+
+# Sentinel value for cancel detection on stdout
+readonly _MENU_CANCEL="__CANCEL__"
+
+# Function: _menu_header
+# Description: Print a formatted menu header with consistent styling.
+# Parameters:
+#   $1 - Header title text
+_menu_header() {
+    local title="${1:-Menu}"
+    local width=56
+    echo "" >&2
+    echo -e "  ${CLR_BOLD}${CLR_CYAN}╔$(printf '═%.0s' $(seq 1 ${width}))╗${CLR_RESET}" >&2
+    printf "  ${CLR_BOLD}${CLR_CYAN}║${CLR_RESET}  %-$(( width - 2 ))s${CLR_BOLD}${CLR_CYAN}║${CLR_RESET}\n" "${title}" >&2
+    echo -e "  ${CLR_BOLD}${CLR_CYAN}╚$(printf '═%.0s' $(seq 1 ${width}))╝${CLR_RESET}" >&2
+    echo "" >&2
+}
+
+# Function: _menu_cancel_hint
+# Description: Print the cancel hint line. Called once per submenu.
+_menu_cancel_hint() {
+    echo -e "  ${CLR_DIM}(Type 'q' at any prompt to cancel and return to menu)${CLR_RESET}" >&2
+    echo "" >&2
+}
+
+# Function: _is_cancel
+# Description: Check if user input is a cancel keyword.
+# Parameters:
+#   $1 - User input string
+# Returns: 0 if cancel, 1 if not
+_is_cancel() {
+    local input="${1,,}"  # lowercase
+    case "${input}" in
+        q|quit|cancel|back|exit) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Function: _menu_prompt
+# Description: Display a prompt and read user input. Detects cancel
+#              keywords (q/quit/cancel/back) and returns code 2.
+#              Empty input returns the default value.
+# Parameters:
+#   $1 - Prompt text
+#   $2 - Default value (optional)
+# Outputs: User input, default value, or _MENU_CANCEL on cancel
+# Returns: 0 on input, 2 on cancel
+_menu_prompt() {
+    local prompt="${1}"
+    local default="${2:-}"
+    local input=""
+
+    if [[ -n "${default}" ]]; then
+        echo -ne "  ${CLR_BOLD}${prompt}${CLR_RESET} [${CLR_DIM}${default}${CLR_RESET}]: " >&2
+    else
+        echo -ne "  ${CLR_BOLD}${prompt}${CLR_RESET}: " >&2
+    fi
+
+    read -r input
+
+    # Check for cancel
+    if _is_cancel "${input}"; then
+        echo "${_MENU_CANCEL}"
+        return 2
+    fi
+
+    if [[ -z "${input}" ]]; then
+        echo "${default}"
+    else
+        echo "${input}"
+    fi
+    return 0
+}
+
+# Function: _menu_prompt_yn
+# Description: Prompt for a yes/no decision with default.
+#              Supports cancel via q/quit/cancel/back.
+# Parameters:
+#   $1 - Prompt text
+#   $2 - Default (y or n)
+# Returns: 0 for yes, 1 for no, 2 for cancel
+_menu_prompt_yn() {
+    local prompt="${1}"
+    local default="${2:-n}"
+    local hint="y/N"
+    [[ "${default}" == "y" ]] && hint="Y/n"
+
+    while true; do
+        echo -ne "  ${CLR_BOLD}${prompt}${CLR_RESET} [${hint}]: " >&2
+        local input=""
+        read -r input
+
+        # Check cancel
+        if _is_cancel "${input}"; then
+            return 2
+        fi
+
+        input="${input:-${default}}"
+        input="${input,,}"  # lowercase
+        case "${input}" in
+            y|yes) return 0 ;;
+            n|no)  return 1 ;;
+            *)     echo -e "  ${CLR_RED}Please enter y or n${CLR_RESET}" >&2 ;;
+        esac
+    done
+}
+
+# Function: _menu_prompt_choice
+# Description: Prompt user to select from numbered options with cancel.
+# Parameters:
+#   $1 - Prompt text
+#   $2 - Maximum valid option number
+#   $3 - Default option (optional)
+# Outputs: Selected option number
+# Returns: 0 on selection, 2 on cancel
+_menu_prompt_choice() {
+    local prompt="${1:-Select}"
+    local max="${2:-9}"
+    local default="${3:-}"
+
+    while true; do
+        local input
+        input="$(_menu_prompt "${prompt}" "${default}")" || return 2
+
+        # Validate: must be a number within range
+        if [[ "${input}" =~ ^[0-9]+$ ]] && (( input >= 0 && input <= max )); then
+            echo "${input}"
+            return 0
+        fi
+
+        echo -e "  ${CLR_RED}Invalid selection '${input}'. Enter 0-${max}.${CLR_RESET}" >&2
+    done
+}
+
+# Function: _menu_prompt_port
+# Description: Prompt for a port number with validation and cancel.
+# Parameters:
+#   $1 - Prompt text (default: "Port")
+#   $2 - Default value (optional)
+# Outputs: Validated port number
+# Returns: 0 on valid port, 2 on cancel
+_menu_prompt_port() {
+    local prompt="${1:-Port}"
+    local default="${2:-}"
+
+    while true; do
+        local input
+        input="$(_menu_prompt "${prompt}" "${default}")" || return 2
+
+        if [[ -z "${input}" ]]; then
+            echo -e "  ${CLR_RED}Port is required${CLR_RESET}" >&2
+            continue
+        fi
+
+        if validate_port "${input}" 2>/dev/null; then
+            echo "${input}"
+            return 0
+        fi
+
+        echo -e "  ${CLR_RED}Invalid port '${input}'. Must be 1-65535.${CLR_RESET}" >&2
+    done
+}
+
+# Function: _menu_prompt_host
+# Description: Prompt for a hostname/IP with validation and cancel.
+# Parameters:
+#   $1 - Prompt text
+#   $2 - Default value (optional)
+# Outputs: Validated hostname
+# Returns: 0 on valid host, 2 on cancel
+_menu_prompt_host() {
+    local prompt="${1:-Remote host}"
+    local default="${2:-}"
+
+    while true; do
+        local input
+        input="$(_menu_prompt "${prompt}" "${default}")" || return 2
+
+        if [[ -z "${input}" ]]; then
+            echo -e "  ${CLR_RED}Hostname/IP is required${CLR_RESET}" >&2
+            continue
+        fi
+
+        if validate_hostname "${input}" 2>/dev/null; then
+            echo "${input}"
+            return 0
+        fi
+
+        echo -e "  ${CLR_RED}Invalid hostname '${input}'.${CLR_RESET}" >&2
+    done
+}
+
+# Function: _menu_prompt_protocol
+# Description: Present protocol selection menu with cancel.
+# Outputs: Normalized protocol string (tcp4, tcp6, udp4, udp6)
+# Returns: 0 on selection, 2 on cancel
+_menu_prompt_protocol() {
+    echo -e "  ${CLR_DIM}Protocol options:${CLR_RESET}" >&2
+    echo "    1) TCP/IPv4  (tcp4)" >&2
+    echo "    2) TCP/IPv6  (tcp6)" >&2
+    echo "    3) UDP/IPv4  (udp4)" >&2
+    echo "    4) UDP/IPv6  (udp6)" >&2
+
+    while true; do
+        local choice
+        choice="$(_menu_prompt "Protocol" "1")" || return 2
+        case "${choice}" in
+            1|tcp4|tcp) echo "tcp4"; return 0 ;;
+            2|tcp6)     echo "tcp6"; return 0 ;;
+            3|udp4|udp) echo "udp4"; return 0 ;;
+            4|udp6)     echo "udp6"; return 0 ;;
+            *)          echo -e "  ${CLR_RED}Enter 1-4${CLR_RESET}" >&2 ;;
+        esac
+    done
+}
+
+# Function: _menu_prompt_name
+# Description: Prompt for an optional session name with validation and cancel.
+# Outputs: Validated name or empty string
+# Returns: 0 on input, 2 on cancel
+_menu_prompt_name() {
+    while true; do
+        local sname
+        sname="$(_menu_prompt "Session name")" || return 2
+        if [[ -z "${sname}" ]]; then
+            echo ""
+            return 0
+        fi
+        if validate_session_name "${sname}" 2>/dev/null; then
+            echo "${sname}"
+            return 0
+        fi
+        echo -e "  ${CLR_RED}Invalid name. Use alphanumeric, hyphens, underscores, dots (max 64).${CLR_RESET}" >&2
+    done
+}
+
+# Function: _menu_pause
+# Description: Wait for the user to press Enter before continuing.
+_menu_pause() {
+    echo "" >&2
+    echo -ne "  ${CLR_DIM}Press Enter to return to menu...${CLR_RESET}" >&2
+    read -r
+}
+
+# Function: _menu_cancelled
+# Description: Show cancellation message. Called by submenus on return 2.
+_menu_cancelled() {
+    echo "" >&2
+    echo -e "  ${CLR_YELLOW}Cancelled — returning to main menu.${CLR_RESET}" >&2
+    _menu_pause
+}
+
+# ─── Shared Optional Flags Collector ─────────────────────────────────
+
+# Function: _menu_collect_common_flags
+# Description: Collect optional flags common to multiple modes:
+#              protocol, dual-stack, capture, watchdog, session name.
+#              Appends to the args array passed by nameref.
+# Parameters:
+#   $1 - Name of the args array (nameref)
+#   $2 - Whether to offer protocol selection (true/false)
+#   $3 - Whether to offer session name (true/false)
+# Returns: 0 on success, 2 on cancel
+_menu_collect_common_flags() {
+    local -n _args_ref="${1}"
+    local offer_proto="${2:-true}"
+    local offer_name="${3:-true}"
+    local rc=0
+
+    # Protocol
+    if [[ "${offer_proto}" == true ]]; then
+        _menu_prompt_yn "Change protocol from tcp4?" || rc=$?
+        [[ ${rc} -eq 2 ]] && return 2
+        if [[ ${rc} -eq 0 ]]; then
+            local proto
+            proto="$(_menu_prompt_protocol)" || return 2
+            _args_ref+=(--proto "${proto}")
+        fi
+        rc=0
+    fi
+
+    # Dual-stack
+    _menu_prompt_yn "Enable dual-stack (TCP + UDP)?" || rc=$?
+    [[ ${rc} -eq 2 ]] && return 2
+    [[ ${rc} -eq 0 ]] && _args_ref+=(--dual-stack)
+    rc=0
+
+    # Capture
+    _menu_prompt_yn "Enable traffic capture?" || rc=$?
+    [[ ${rc} -eq 2 ]] && return 2
+    [[ ${rc} -eq 0 ]] && _args_ref+=(--capture)
+    rc=0
+
+    # Watchdog
+    _menu_prompt_yn "Enable watchdog auto-restart?" || rc=$?
+    [[ ${rc} -eq 2 ]] && return 2
+    [[ ${rc} -eq 0 ]] && _args_ref+=(--watchdog)
+    rc=0
+
+    # Session name
+    if [[ "${offer_name}" == true ]]; then
+        _menu_prompt_yn "Set a custom session name?" || rc=$?
+        [[ ${rc} -eq 2 ]] && return 2
+        if [[ ${rc} -eq 0 ]]; then
+            local sname
+            sname="$(_menu_prompt_name)" || return 2
+            [[ -n "${sname}" ]] && _args_ref+=(--name "${sname}")
+        fi
+    fi
+
+    return 0
+}
+
+# Function: _menu_confirm_execute
+# Description: Show the constructed command and ask for confirmation.
+# Parameters:
+#   $@ - The full argument array
+# Returns: 0 if confirmed, 1 if declined, 2 if cancelled
+_menu_confirm_execute() {
+    local rc=0
+    echo "" >&2
+    echo -e "  ${CLR_BOLD}Command:${CLR_RESET} ${SCRIPT_NAME}.sh $*" >&2
+    echo "" >&2
+    _menu_prompt_yn "Execute?" || rc=$?
+    return ${rc}
+}
+
+# ─── Mode Submenus ───────────────────────────────────────────────────
+
+# Function: _menu_listen
+# Description: Interactive submenu for Listen mode with cancel support.
+_menu_listen() {
+    _menu_header "Listen Mode — Single TCP/UDP Listener"
+    _menu_cancel_hint
+
+    local port args=()
+
+    # Required: port
+    port="$(_menu_prompt_port "Listen port")" || { _menu_cancelled; return 0; }
+    args=(listen --port "${port}")
+
+    # Common flags (protocol, dual-stack, capture, watchdog, name)
+    _menu_collect_common_flags args true true || { _menu_cancelled; return 0; }
+
+    # Listen-specific: bind address
+    local rc=0
+    _menu_prompt_yn "Bind to a specific address?" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        local bind_addr
+        bind_addr="$(_menu_prompt_host "Bind address" "0.0.0.0")" || { _menu_cancelled; return 0; }
+        args+=(--bind "${bind_addr}")
+    fi
+
+    # Listen-specific: socat opts
+    rc=0
+    _menu_prompt_yn "Provide extra socat address options?" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        while true; do
+            local sopts
+            sopts="$(_menu_prompt "Socat options")" || { _menu_cancelled; return 0; }
+            if validate_socat_opts "${sopts}" 2>/dev/null; then
+                args+=(--socat-opts "${sopts}")
+                break
+            fi
+            echo -e "  ${CLR_RED}Invalid characters. Allowed: alphanumeric, = , . : / _ -${CLR_RESET}" >&2
+        done
+    fi
+
+    # Confirm and execute
+    rc=0
+    _menu_confirm_execute "${args[@]}" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        main "${args[@]}"
+    else
+        echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# Function: _menu_batch
+# Description: Interactive submenu for Batch mode with cancel support.
+_menu_batch() {
+    _menu_header "Batch Mode — Multiple Listeners"
+    _menu_cancel_hint
+
+    local args=(batch)
+
+    # Source selection
+    echo "  Port source:" >&2
+    echo "    1) Comma-separated list" >&2
+    echo "    2) Port range" >&2
+    echo "    3) Configuration file" >&2
+
+    local source_choice
+    source_choice="$(_menu_prompt_choice "Source" 3 "1")" || { _menu_cancelled; return 0; }
+
+    case "${source_choice}" in
+        1)
+            while true; do
+                local ports_input
+                ports_input="$(_menu_prompt "Ports (e.g. 8080,8081,8082)")" || { _menu_cancelled; return 0; }
+                if [[ -n "${ports_input}" ]]; then
+                    args+=(--ports "${ports_input}")
+                    break
+                fi
+                echo -e "  ${CLR_RED}Port list is required${CLR_RESET}" >&2
+            done
+            ;;
+        2)
+            local range_start range_end
+            range_start="$(_menu_prompt_port "Range start port")" || { _menu_cancelled; return 0; }
+            range_end="$(_menu_prompt_port "Range end port")" || { _menu_cancelled; return 0; }
+            args+=(--range "${range_start}-${range_end}")
+            ;;
+        3)
+            while true; do
+                local conf_path
+                conf_path="$(_menu_prompt "Config file path")" || { _menu_cancelled; return 0; }
+                if [[ -f "${conf_path}" ]] && validate_file_path "${conf_path}" 2>/dev/null; then
+                    args+=(--file "${conf_path}")
+                    break
+                fi
+                echo -e "  ${CLR_RED}File not found or invalid path: '${conf_path}'${CLR_RESET}" >&2
+            done
+            ;;
+    esac
+
+    # Common flags (protocol, dual-stack, capture, watchdog) — no name for batch
+    _menu_collect_common_flags args true false || { _menu_cancelled; return 0; }
+
+    # Confirm and execute
+    local rc=0
+    _menu_confirm_execute "${args[@]}" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        main "${args[@]}"
+    else
+        echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# Function: _menu_forward
+# Description: Interactive submenu for Forward mode with cancel support.
+_menu_forward() {
+    _menu_header "Forward Mode — Traffic Relay"
+    _menu_cancel_hint
+
+    local lport rhost rport args=(forward)
+
+    # Required fields
+    lport="$(_menu_prompt_port "Local listen port")" || { _menu_cancelled; return 0; }
+    rhost="$(_menu_prompt_host "Remote host")" || { _menu_cancelled; return 0; }
+    rport="$(_menu_prompt_port "Remote port")" || { _menu_cancelled; return 0; }
+    args+=(--lport "${lport}" --rhost "${rhost}" --rport "${rport}")
+
+    # Common flags
+    _menu_collect_common_flags args true true || { _menu_cancelled; return 0; }
+
+    # Confirm and execute
+    local rc=0
+    _menu_confirm_execute "${args[@]}" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        main "${args[@]}"
+    else
+        echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# Function: _menu_tunnel
+# Description: Interactive submenu for Tunnel mode (TLS) with cancel.
+_menu_tunnel() {
+    _menu_header "Tunnel Mode — TLS Encrypted Tunnel"
+    _menu_cancel_hint
+
+    local lport rhost rport args=(tunnel)
+
+    # Required fields
+    lport="$(_menu_prompt_port "Local TLS port")" || { _menu_cancelled; return 0; }
+    rhost="$(_menu_prompt_host "Remote host")" || { _menu_cancelled; return 0; }
+    rport="$(_menu_prompt_port "Remote port")" || { _menu_cancelled; return 0; }
+    args+=(--port "${lport}" --rhost "${rhost}" --rport "${rport}")
+
+    # TLS certificate options
+    local rc=0
+    _menu_prompt_yn "Provide custom TLS certificate?" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        while true; do
+            local cert_path key_path
+            cert_path="$(_menu_prompt "Certificate file path (.pem)")" || { _menu_cancelled; return 0; }
+            key_path="$(_menu_prompt "Private key file path (.key)")" || { _menu_cancelled; return 0; }
+
+            local valid=true
+            [[ ! -f "${cert_path}" ]] && { echo -e "  ${CLR_RED}Certificate not found: ${cert_path}${CLR_RESET}" >&2; valid=false; }
+            [[ ! -f "${key_path}" ]] && { echo -e "  ${CLR_RED}Key not found: ${key_path}${CLR_RESET}" >&2; valid=false; }
+
+            if [[ "${valid}" == true ]]; then
+                args+=(--cert "${cert_path}" --key "${key_path}")
+                break
+            fi
+
+            rc=0
+            _menu_prompt_yn "Retry certificate paths?" || rc=$?
+            [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+            [[ ${rc} -ne 0 ]] && { echo -e "  ${CLR_DIM}Using auto-generated self-signed certificate${CLR_RESET}" >&2; break; }
+        done
+    else
+        echo -e "  ${CLR_DIM}Auto-generating self-signed certificate${CLR_RESET}" >&2
+    fi
+
+    # Common flags (no separate protocol for tunnel — TLS is TCP only)
+    _menu_collect_common_flags args false true || { _menu_cancelled; return 0; }
+
+    # Confirm and execute
+    rc=0
+    _menu_confirm_execute "${args[@]}" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        main "${args[@]}"
+    else
+        echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# Function: _menu_redirect
+# Description: Interactive submenu for Redirect mode with cancel.
+_menu_redirect() {
+    _menu_header "Redirect Mode — Transparent Port Redirection"
+    _menu_cancel_hint
+
+    local lport rhost rport args=(redirect)
+
+    # Required fields
+    lport="$(_menu_prompt_port "Local port")" || { _menu_cancelled; return 0; }
+    rhost="$(_menu_prompt_host "Redirect target host")" || { _menu_cancelled; return 0; }
+    rport="$(_menu_prompt_port "Redirect target port")" || { _menu_cancelled; return 0; }
+    args+=(--lport "${lport}" --rhost "${rhost}" --rport "${rport}")
+
+    # Common flags
+    _menu_collect_common_flags args true true || { _menu_cancelled; return 0; }
+
+    # Confirm and execute
+    local rc=0
+    _menu_confirm_execute "${args[@]}" || rc=$?
+    [[ ${rc} -eq 2 ]] && { _menu_cancelled; return 0; }
+    if [[ ${rc} -eq 0 ]]; then
+        main "${args[@]}"
+    else
+        echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# Function: _menu_status
+# Description: Interactive submenu for Status mode.
+_menu_status() {
+    _menu_header "Session Status"
+
+    echo "    1) Show active sessions" >&2
+    echo "    2) Show detailed session info" >&2
+    echo "    3) Clean up dead sessions" >&2
+    echo "    0) Back to main menu" >&2
+
+    local choice
+    choice="$(_menu_prompt_choice "Option" 3 "1")"
+
+    case "${choice}" in
+        0) return 0 ;;
+        1) main status ;;
+        2) main status --detail ;;
+        3)
+            echo "" >&2
+            echo -e "  ${CLR_DIM}Scanning for dead sessions...${CLR_RESET}" >&2
+            # Capture output to always give feedback
+            local cleanup_output
+            cleanup_output="$(main status --cleanup 2>&1)"
+            if echo "${cleanup_output}" | grep -qi 'cleaned'; then
+                echo "${cleanup_output}" >&2
+            else
+                echo -e "  ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} No dead sessions found — all sessions are healthy or none exist." >&2
+            fi
+            ;;
+    esac
+
+    _menu_pause
+}
+
+# Function: _menu_stop
+# Description: Interactive submenu for Stop mode.
+_menu_stop() {
+    _menu_header "Stop Sessions"
+
+    echo "    1) Stop ALL sessions" >&2
+    echo "    2) Stop by session name" >&2
+    echo "    3) Stop by port number" >&2
+    echo "    4) Stop by PID" >&2
+    echo "    0) Back to main menu" >&2
+
+    local choice
+    choice="$(_menu_prompt_choice "Option" 4 "1")"
+
+    case "${choice}" in
+        0) return 0 ;;
+        1)
+            echo "" >&2
+            local rc=0
+            _menu_prompt_yn "Stop ALL active sessions?" || rc=$?
+            if [[ ${rc} -eq 0 ]]; then
+                main stop --all
+            else
+                echo -e "  ${CLR_YELLOW}Cancelled.${CLR_RESET}" >&2
+            fi
+            ;;
+        2)
+            # Show current sessions first
+            echo "" >&2
+            echo -e "  ${CLR_DIM}Active sessions:${CLR_RESET}" >&2
+            main status 2>&1 | grep -E '^\s+\[' >&2 || echo -e "  ${CLR_DIM}  (none)${CLR_RESET}" >&2
+            echo "" >&2
+
+            local sname
+            sname="$(_menu_prompt "Session name to stop")"
+            if [[ -n "${sname}" ]] && ! _is_cancel "${sname}"; then
+                main stop --name "${sname}"
+            fi
+            ;;
+        3)
+            local sport
+            sport="$(_menu_prompt_port "Port number to stop")"
+            if [[ $? -eq 0 ]] && [[ -n "${sport}" ]]; then
+                main stop --port "${sport}"
+            fi
+            ;;
+        4)
+            while true; do
+                local spid
+                spid="$(_menu_prompt "PID to stop")" || break
+                if [[ "${spid}" =~ ^[0-9]+$ ]]; then
+                    main stop --pid "${spid}"
+                    break
+                fi
+                echo -e "  ${CLR_RED}PID must be a number${CLR_RESET}" >&2
+            done
+            ;;
+    esac
+
+    _menu_pause
+}
+
+# Function: _menu_check_deps
+# Description: Check and report status of all dependencies.
+_menu_check_deps() {
+    _menu_header "Dependency Check"
+
+    local all_ok=true
+
+    # Required dependencies
+    echo -e "  ${CLR_BOLD}Required:${CLR_RESET}" >&2
+
+    # bash version
+    local bash_ver="${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"
+    if (( BASH_VERSINFO[0] >= 4 && BASH_VERSINFO[1] >= 4 )) || (( BASH_VERSINFO[0] >= 5 )); then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} bash ${bash_ver} (≥4.4 required)" >&2
+    else
+        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} bash ${bash_ver} (≥4.4 required)" >&2
+        all_ok=false
+    fi
+
+    # socat
+    if command -v socat &>/dev/null; then
+        local socat_ver
+        socat_ver="$(socat -V 2>/dev/null | grep -oP 'socat version \K[0-9.]+' || echo "unknown")"
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} socat ${socat_ver}" >&2
+    else
+        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} socat (not found)" >&2
+        all_ok=false
+    fi
+
+    # coreutils
+    if command -v date &>/dev/null; then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} coreutils (date, mkdir, chmod, etc.)" >&2
+    else
+        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} coreutils (not found)" >&2
+        all_ok=false
+    fi
+
+    # setsid
+    if command -v setsid &>/dev/null; then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} setsid (util-linux)" >&2
+    else
+        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} setsid (not found — install util-linux)" >&2
+        all_ok=false
+    fi
+
+    echo "" >&2
+    echo -e "  ${CLR_BOLD}Recommended:${CLR_RESET}" >&2
+
+    # openssl
+    if command -v openssl &>/dev/null; then
+        local ssl_ver
+        ssl_ver="$(openssl version 2>/dev/null | awk '{print $2}' || echo "unknown")"
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} openssl ${ssl_ver} (tunnel mode TLS)" >&2
+    else
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} openssl (not found — required for tunnel mode)" >&2
+    fi
+
+    # ss
+    if command -v ss &>/dev/null; then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} ss (iproute2 — port detection)" >&2
+    else
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} ss (not found — port checks will use netstat)" >&2
+    fi
+
+    # flock
+    if command -v flock &>/dev/null; then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} flock (util-linux — session locking)" >&2
+    else
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} flock (not found — concurrent access unprotected)" >&2
+    fi
+
+    # lsof
+    if command -v lsof &>/dev/null; then
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} lsof (fallback port/process detection)" >&2
+    else
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} lsof (not found — optional fallback)" >&2
+    fi
+
+    echo "" >&2
+    echo -e "  ${CLR_BOLD}Runtime:${CLR_RESET}" >&2
+    echo -e "    Script:     ${SCRIPT_DIR}/${SCRIPT_NAME}.sh" >&2
+    echo -e "    Version:    ${SCRIPT_VERSION}" >&2
+    echo -e "    Sessions:   ${SESSION_DIR}/" >&2
+    echo -e "    Logs:       ${LOG_DIR}/" >&2
+    echo -e "    Certs:      ${CERT_DIR}/" >&2
+    echo -e "    User:       $(whoami)" >&2
+    echo -e "    EUID:       ${EUID}" >&2
+
+    echo "" >&2
+    if [[ "${all_ok}" == true ]]; then
+        echo -e "  ${CLR_GREEN}${CLR_BOLD}All required dependencies satisfied.${CLR_RESET}" >&2
+    else
+        echo -e "  ${CLR_RED}${CLR_BOLD}Missing required dependencies. Install them before use.${CLR_RESET}" >&2
+    fi
+
+    _menu_pause
+}
+
+# ─── Root Menu ───────────────────────────────────────────────────────
+
+# Function: _menu_banner
+# Description: Print stylized ASCII art banner for the main menu.
+_menu_banner() {
+    echo "" >&2
+    echo -e "  ${CLR_CYAN}${CLR_BOLD}" >&2
+    cat >&2 << 'BANNER'
+    ╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║   ███████  ██████   ██████  █████  ████████               ║
+    ║   ██      ██    ██ ██      ██   ██    ██                  ║
+    ║   ███████ ██    ██ ██      ███████    ██                  ║
+    ║        ██ ██    ██ ██      ██   ██    ██                  ║
+    ║   ███████  ██████   ██████ ██   ██    ██                  ║
+    ║                                                           ║
+    ║     N E T W O R K   O P E R A T I O N S   M A N A G E R  ║
+    ║                                                           ║
+    ╚═══════════════════════════════════════════════════════════╝
+BANNER
+    echo -e "  ${CLR_RESET}" >&2
+    echo -e "  ${CLR_DIM}  Version ${SCRIPT_VERSION}  •  $(date '+%Y-%m-%d %H:%M')  •  User: $(whoami)${CLR_RESET}" >&2
+}
+
+# Function: interactive_menu
+# Description: Main interactive menu loop. Displays the root menu,
+#              dispatches to submenus, and loops until the user exits.
+interactive_menu() {
+    # Ensure directories exist for status/dep checks
+    _ensure_dirs
+
+    while true; do
+        _menu_banner
+
+        echo "" >&2
+        echo -e "  ${CLR_BOLD}Operational Modes:${CLR_RESET}" >&2
+        echo -e "    ${CLR_CYAN}1)${CLR_RESET}  Listen     — Start a TCP/UDP listener" >&2
+        echo -e "    ${CLR_CYAN}2)${CLR_RESET}  Batch      — Launch multiple listeners" >&2
+        echo -e "    ${CLR_CYAN}3)${CLR_RESET}  Forward    — Relay traffic to a remote host" >&2
+        echo -e "    ${CLR_CYAN}4)${CLR_RESET}  Tunnel     — Create a TLS-encrypted tunnel" >&2
+        echo -e "    ${CLR_CYAN}5)${CLR_RESET}  Redirect   — Transparent port redirection" >&2
+        echo "" >&2
+        echo -e "  ${CLR_BOLD}Status & Management:${CLR_RESET}" >&2
+        echo -e "    ${CLR_CYAN}6)${CLR_RESET}  Session Status" >&2
+        echo -e "    ${CLR_CYAN}7)${CLR_RESET}  Stop Sessions" >&2
+        echo "" >&2
+        echo -e "  ${CLR_BOLD}System:${CLR_RESET}" >&2
+        echo -e "    ${CLR_CYAN}8)${CLR_RESET}  Check Dependencies" >&2
+        echo -e "    ${CLR_CYAN}9)${CLR_RESET}  Help / CLI Usage" >&2
+        echo -e "    ${CLR_CYAN}0)${CLR_RESET}  Exit" >&2
+
+        local choice
+        choice="$(_menu_prompt_choice "Select" 9)"
+
+        case "${choice}" in
+            1) _menu_listen ;;
+            2) _menu_batch ;;
+            3) _menu_forward ;;
+            4) _menu_tunnel ;;
+            5) _menu_redirect ;;
+            6) _menu_status ;;
+            7) _menu_stop ;;
+            8) _menu_check_deps ;;
+            9) show_main_help; _menu_pause ;;
+            0)
+                echo "" >&2
+                echo -e "  ${CLR_DIM}Goodbye.${CLR_RESET}" >&2
+                echo "" >&2
+                return 0
+                ;;
+        esac
+    done
+}
+
+#======================================================================
 # MAIN DISPATCHER
 # Routes the first positional argument (mode) to the appropriate
 # handler function, passing all remaining arguments through.
@@ -3368,10 +4399,10 @@ main() {
     # Ensure directory structure exists
     _ensure_dirs
 
-    # Must have at least a mode argument
+    # No arguments: launch interactive menu
     if [[ $# -lt 1 ]]; then
-        show_main_help
-        exit 0
+        interactive_menu
+        return 0
     fi
 
     local mode="${1}"
@@ -3382,6 +4413,10 @@ main() {
         -h|--help|help)
             show_main_help
             exit 0
+            ;;
+        menu)
+            interactive_menu
+            return 0
             ;;
         --version)
             echo "socat_manager.sh v${SCRIPT_VERSION}"
