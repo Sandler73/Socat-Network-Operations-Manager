@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/images/header-socat.png" alt="Socat Network Operations Manager" width="100%" />
+  <img src="assets/images/header-socat.png" alt="Socat Network Operations Manager" width="50%" />
 </p>
 
 <p align="center">
