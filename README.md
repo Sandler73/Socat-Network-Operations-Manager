@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/images/header-socat.png" alt="Socat Network Operations Manager" width="100%" />
+</p>
+
+<p align="center">
   <h1 align="center">Socat Network Operations Manager</h1>
   <p align="center">
     A comprehensive socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
