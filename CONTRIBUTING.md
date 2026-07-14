@@ -1,4 +1,4 @@
-# Contributing to Socat Network Operations Manager (Python Variant)
+# Contributing to Socat Network Operations Manager
 
 Thank you for your interest in contributing. This document provides everything
 you need to set up a development environment, run tests, follow coding
@@ -19,26 +19,21 @@ standards, and submit changes.
   - [Integration Tests Only](#integration-tests-only)
   - [Running Specific Tests](#running-specific-tests)
   - [Linting](#linting)
-  - [Coverage](#coverage)
 - [Writing Tests](#writing-tests)
   - [Test Architecture](#test-architecture)
-  - [Test Fixtures](#test-fixtures)
   - [Adding Unit Tests](#adding-unit-tests)
   - [Adding Integration Tests](#adding-integration-tests)
-  - [Mocking Patterns](#mocking-patterns)
+  - [Using Stubs](#using-stubs)
 - [Coding Standards](#coding-standards)
-  - [Module Structure](#module-structure)
+  - [Script Structure](#script-structure)
   - [Function Documentation](#function-documentation)
-  - [Type Hints](#type-hints)
   - [Input Validation](#input-validation)
   - [Error Handling](#error-handling)
-  - [Security Requirements](#security-requirements)
   - [CLI Flag Checklist](#cli-flag-checklist)
 - [Submitting Changes](#submitting-changes)
   - [Branch Naming](#branch-naming)
   - [Commit Messages](#commit-messages)
   - [Pull Request Process](#pull-request-process)
-  - [Code Review Checklist](#code-review-checklist)
 - [Reporting Bugs](#reporting-bugs)
 - [Security Vulnerabilities](#security-vulnerabilities)
 
@@ -59,13 +54,20 @@ authorized, lawful use of security tooling.
 
 | Tool | Version | Purpose | Install |
 |------|---------|---------|---------|
-| **Python** | 3.12+ | Runtime and development | `sudo apt-get install python3` |
+| **bash** | 4.4+ | Script execution | Pre-installed on most Linux |
 | **socat** | any | Runtime dependency (optional for tests) | `sudo apt-get install -y socat` |
-| **pytest** | 9.0+ | Test framework | `pip install pytest` |
-| **pytest-cov** | 7.0+ | Coverage reporting | `pip install pytest-cov` |
-| **ruff** | 0.15+ | Linting and import sorting | `pip install ruff` |
+| **BATS** | 1.5+ | Test framework | [GitHub](https://github.com/bats-core/bats-core) |
+| **ShellCheck** | 0.8+ | Static analysis | `sudo apt-get install -y shellcheck` |
 | **GNU Make** | 3.81+ | Build automation | Pre-installed on most Linux |
 | **Git** | 2.0+ | Version control | `sudo apt-get install -y git` |
+
+**Install BATS from source** (recommended for latest version):
+
+```bash
+git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
+sudo /tmp/bats-core/install.sh /usr/local
+bats --version
+```
 
 **Verify all prerequisites at once:**
 
@@ -75,61 +77,57 @@ make check-deps
 
 ### Setting Up the Development Environment
 
-**Option 1: Virtual environment (recommended)**
-
 ```bash
+# Clone the repository
 git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
-cd Socat-Network-Operations-Manager
-make venv
-source socat-manager-venv/bin/activate
+cd socat-manager
+
+# Verify prerequisites
+make check-deps
+
+# Run the full test suite to confirm everything works
 make test
-```
 
-**Option 2: System Python**
-
-```bash
-git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
-cd Socat-Network-Operations-Manager
-pip install --break-system-packages -e .
-pip install --break-system-packages pytest pytest-cov ruff
-make test
-```
-
-**Option 3: Standalone (no install)**
-
-```bash
-git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
-cd Socat-Network-Operations-Manager
-pip install --break-system-packages pytest pytest-cov ruff
-PYTHONPATH=src python3 -m pytest tests/ -q
+# You should see: "✓ All tests passed" with 220 tests passing
 ```
 
 ### Project Structure
 
 ```
-src/socat_manager/          # Production source (19 files, 6,779 lines)
-├── __init__.py             # Package version
-├── __main__.py             # Entry point, signal handlers, dispatch
-├── config.py               # Constants, frozen dataclasses, protocol maps
-├── logging_setup.py        # Structured dual-output logging
-├── validation.py           # 9 whitelist validators (trust boundary)
-├── session.py              # Session CRUD, locking, migration
-├── commands.py             # 4 socat command builders
-├── process.py              # Launch (setsid), 9-step stop, port checks
-├── watchdog.py             # Monitor-first auto-restart
-├── certs.py                # TLS certificate generation
-├── cli.py                  # argparse (10 subcommands)
-├── menu.py                 # Interactive TUI
-└── modes/                  # 7 mode handlers
-    ├── listen.py, batch.py, forward.py
-    ├── tunnel.py, redirect.py
-    ├── status.py, stop.py
-
-tests/                       # Test suite (510 tests)
-├── conftest.py             # Shared fixtures
-├── unit/                   # 355 unit tests (12 files)
-├── integration/            # 155 integration tests (6 files)
-└── stubs/                  # Mock socat, ss, openssl binaries
+socat-manager/
+├── socat_manager.sh            # Main script (3,400+ lines)
+├── Makefile                    # Build, test, install, package
+├── bin/
+│   └── socat-manager           # System-wide wrapper script
+├── templates/
+│   └── activate.sh             # Virtual environment activation template
+├── tests/
+│   ├── helpers/
+│   │   └── test_helper.bash    # Shared setup/teardown for all tests
+│   ├── stubs/
+│   │   ├── socat               # Mock socat (logs args, sleeps)
+│   │   ├── ss                  # Mock ss (canned port data)
+│   │   └── openssl             # Mock openssl (dummy certs)
+│   ├── fixtures/
+│   │   ├── sample_session.session  # v2.2 format session file
+│   │   ├── legacy_session.pid      # v1.0 format (migration testing)
+│   │   └── ports.conf              # Sample batch port config
+│   ├── unit/
+│   │   ├── validation.bats     # Input validation function tests
+│   │   └── session.bats        # Session management function tests
+│   └── integration/
+│       ├── lifecycle.bats      # Launch → status → stop tests
+│       ├── dual_stack.bats     # Protocol-scoped stop tests
+│       └── capture.bats        # Traffic capture tests
+├── .shellcheckrc               # ShellCheck configuration
+├── .gitignore                  # Git ignore rules
+├── README.md                   # Project overview and reference
+├── USAGE_GUIDE.md              # Detailed usage and deployment
+├── CHANGELOG.md                # Version history
+├── SECURITY.md                 # Security policy and threat model
+├── CODE_OF_CONDUCT.md          # Contributor code of conduct
+├── CONTRIBUTING.md             # This file
+└── LICENSE                     # MIT License
 ```
 
 ---
@@ -139,14 +137,20 @@ tests/                       # Test suite (510 tests)
 ### Full Test Suite
 
 ```bash
-make test        # Runs: lint → unit tests → integration tests
+make test
 ```
+
+This runs ShellCheck linting, then all unit tests, then all integration tests.
+All 220 tests must pass before submitting a PR.
 
 ### Unit Tests Only
 
 ```bash
-make test-unit   # Fast, ~3 seconds, no I/O
+make test-unit
 ```
+
+Fast (~2 seconds). Tests validation functions and session management functions
+in isolation. No stubs or background processes involved.
 
 ### Integration Tests Only
 
@@ -154,36 +158,31 @@ make test-unit   # Fast, ~3 seconds, no I/O
 make test-integration
 ```
 
+Tests the full session lifecycle (launch → status → stop) using stubbed socat,
+ss, and openssl. Verifies PID-file handoff, process group isolation,
+protocol-scoped stop, and capture log generation.
+
 ### Running Specific Tests
 
 ```bash
-# By file:
-PYTHONPATH=src python3 -m pytest tests/unit/test_validation.py -v
+# Run a single test file
+bats tests/unit/validation.bats
 
-# By class:
-PYTHONPATH=src python3 -m pytest tests/unit/test_session.py::TestSessionReadAllFields -v
+# Run a specific test by name (partial match)
+bats tests/integration/dual_stack.bats --filter "stopping TCP preserves UDP"
 
-# By name pattern:
-PYTHONPATH=src python3 -m pytest tests/ -k "test_dual_stack" -v
+# Run all tests matching a pattern
+bats --recursive tests/ --filter "validate_port"
 ```
 
 ### Linting
 
 ```bash
 make lint
-# Equivalent to: ruff check src/ tests/ --select E,W,F,I --ignore E501
 ```
 
-Ruff rules enforced: E (errors), W (warnings), F (pyflakes), I (import sorting). Line length 120 (E501 ignored for readability).
-
-### Coverage
-
-```bash
-make test-coverage
-# Runs pytest with --cov=socat_manager --cov-report=term-missing
-```
-
-Current threshold: 68% minimum. Core modules (commands, validation, cli, config) are at 85-100%.
+Runs ShellCheck with the project's `.shellcheckrc` configuration. Any warnings
+at severity `warning` or above will fail the check.
 
 ---
 
@@ -191,181 +190,157 @@ Current threshold: 68% minimum. Core modules (commands, validation, cli, config)
 
 ### Test Architecture
 
-| Directory | Tests | Focus | Speed |
-|-----------|-------|-------|-------|
-| `tests/unit/` | 355 | Individual functions, validators, parsers | Fast (~3s) |
-| `tests/integration/` | 155 | Cross-module behavior, session lifecycle | Medium (~6s) |
+Tests use [BATS](https://github.com/bats-core/bats-core) (Bash Automated
+Testing System). Key concepts:
 
-Unit tests mock all subprocess calls and filesystem operations. Integration tests use the `paths` fixture for isolated temporary directories.
+- Each `@test` block runs in its **own subshell** (test isolation is automatic)
+- `setup()` runs before each test, `teardown()` runs after (even on failure)
+- `run <command>` captures stdout in `$output` and exit code in `$status`
+- Assertions use standard `[ ]` test expressions
 
-### Test Fixtures
+The test helper (`tests/helpers/test_helper.bash`) provides:
 
-The shared fixtures in `conftest.py`:
-
-- **`paths`**: Creates an isolated temporary base directory with `sessions/`, `logs/`, `certs/`, `conf/` subdirectories. Automatically cleaned up after each test. All tests that touch the filesystem should use this fixture.
-- **`sample_session`**: Registers a sample redirect session (PID 99999, port 8443, tcp4, remote example.com:443). Returns the session ID.
-- **`dual_stack_sessions`**: Registers TCP + UDP sessions on port 8080. Returns `(tcp_sid, udp_sid)` tuple.
+- **Temp directory isolation**: Each test gets its own temp dir. All runtime
+  paths (`SESSION_DIR`, `LOG_DIR`, etc.) point into the temp dir via symlink.
+- **Stub injection**: Mock socat/ss/openssl are prepended to `PATH`.
+- **Utility functions**: `create_mock_session`, `count_session_files`,
+  `get_stub_log`, `set_ss_state`, `wait_for_session_file`.
 
 ### Adding Unit Tests
 
-1. Create or edit `tests/unit/test_<module>.py`
-2. Import the function under test
-3. Use `paths` fixture if the function touches the filesystem
-4. Mock `subprocess.Popen` for launch tests, `os.kill` for stop tests
-5. `launch_socat_session()` returns `(sid, pid)` tuple — unpack in assertions
+Unit tests go in `tests/unit/`. They test individual functions directly:
 
-```python
-class TestMyFunction:
-    def test_basic_behavior(self, paths):
-        result = my_function(valid_input)
-        assert result == expected_output
+```bash
+#!/usr/bin/env bats
 
-    def test_invalid_input_raises(self, paths):
-        with pytest.raises(ValidationError):
-            my_function(invalid_input)
+setup() {
+    load '../helpers/test_helper'
+    helper_setup
+}
+
+teardown() {
+    helper_teardown
+}
+
+@test "my_function: accepts valid input" {
+    run my_function "valid_input"
+    [ "$status" -eq 0 ]
+}
+
+@test "my_function: rejects invalid input" {
+    run my_function "invalid;input"
+    [ "$status" -eq 1 ]
+}
 ```
 
 ### Adding Integration Tests
 
-1. Create or edit `tests/integration/test_<feature>.py`
-2. Use `sample_session` or `dual_stack_sessions` fixtures for session-dependent tests
-3. Mock `subprocess.Popen` and `os.kill` for process-dependent tests
-4. Mock `subprocess.run` when testing stop_session() (pkill calls)
+Integration tests go in `tests/integration/`. They test multi-function flows
+with the stubbed socat:
 
-### Mocking Patterns
+```bash
+@test "launch and stop: full lifecycle" {
+    # Launch a session (uses stubbed socat)
+    launch_socat_session "test-listen" "listen" "tcp4" "8080" \
+        "socat TCP4-LISTEN:8080,reuseaddr,fork OPEN:/dev/null,creat,append"
+    local sid="${LAUNCH_SID}"
 
-**Launch tests** — mock Popen to return a controlled PID:
+    # Verify session exists
+    [ -f "${SESSION_DIR}/${sid}.session" ]
 
-```python
-@patch("socat_manager.process.os.kill")
-@patch("socat_manager.process.subprocess.Popen")
-def test_launch(self, mock_popen, mock_kill, paths):
-    mock_proc = MagicMock()
-    mock_proc.pid = 54321
-    mock_popen.return_value = mock_proc
-    mock_kill.return_value = None
+    # Stop the session
+    _stop_session "${sid}"
 
-    sid, pid = launch_socat_session("test", "listen", "tcp4", 8080, cmd)
-    assert pid == 54321
+    # Verify cleanup
+    [ ! -f "${SESSION_DIR}/${sid}.session" ]
+}
 ```
 
-**Stop tests** — mock os.kill to simulate dead process:
+### Using Stubs
 
-```python
-@patch("socat_manager.process.subprocess.run")
-@patch("socat_manager.process.os.kill", side_effect=OSError)
-def test_stop(self, mock_kill, mock_run, sample_session, paths):
-    mock_run.return_value = MagicMock(returncode=0, stdout="")
-    result = stop_session(sample_session)
-    assert result is True
-```
+**socat stub**: Logs its arguments to `${TEST_TMPDIR}/.socat_stub.log` and
+sleeps. Set `SOCAT_STUB_EXIT=1` to simulate a crash (for watchdog testing).
 
-**Mode handler tests** — mock at the mode module level:
+**ss stub**: Reads `${TEST_TMPDIR}/.ss_state` to determine which ports are
+"listening". Use `set_ss_state "8080:tcp" "5353:udp"` to configure, and
+`clear_ss_state` to reset.
 
-```python
-@patch("socat_manager.modes.listen.launch_socat_session", return_value=("abcd1234", 54321))
-@patch("socat_manager.modes.listen.check_port_available", return_value=True)
-def test_mode_listen(self, mock_port, mock_launch, paths):
-    mode_listen(args)
-    mock_launch.assert_called_once()
-```
+**openssl stub**: Creates dummy cert/key files at the paths specified by
+`-out` and `-keyout` arguments.
 
 ---
 
 ## Coding Standards
 
-### Module Structure
+### Script Structure
 
-Every module follows this order:
+The script follows a consistent pattern:
 
-```python
-# 1. Module header (synopsis, description, version)
-# 2. from __future__ import annotations
-# 3. Standard library imports
-# 4. Internal imports
-# 5. Constants
-# 6. Classes
-# 7. Functions (ordered by dependency — called functions before callers)
-```
+1. **Header comment block** with synopsis, description, notes, examples, version
+2. **Constants and configuration** (readonly where appropriate)
+3. **Utility functions** (logging, colors, formatting)
+4. **Validation functions** (all `validate_*` functions)
+5. **Session management functions** (register, read, find, cleanup)
+6. **Command builders** (one per mode: `build_socat_*_cmd`)
+7. **Launch infrastructure** (`launch_socat_session`, watchdog)
+8. **Mode handlers** (one per mode: `mode_listen`, `mode_batch`, etc.)
+9. **Help system** (one per mode: `show_*_help`)
+10. **Signal handling and entry point**
+
+New functions should be placed in the appropriate section.
 
 ### Function Documentation
 
-All public functions require Google-style docstrings:
+Every non-trivial function must have a documentation header:
 
-```python
-def my_function(port: int, proto: str = "tcp4") -> tuple[str, int]:
-    """Brief description of what this function does.
-
-    Longer description explaining behavior, design rationale, and
-    any non-obvious logic. Include security annotations if the
-    function handles user input or subprocess calls.
-
-    Args:
-        port: Port number (must be 1-65535, validated before call).
-        proto: Protocol string (default: tcp4).
-
-    Returns:
-        Tuple of (session_id, pid) where session_id is the 8-char
-        hex string and pid is the socat process PID.
-
-    Raises:
-        RuntimeError: If launch fails (port busy, socat not found).
-        ValidationError: If inputs fail validation.
-    """
-```
-
-### Type Hints
-
-All function signatures must have complete type hints:
-
-```python
-def session_find_by_port(target_port: int | str) -> list[str]:
-def launch_socat_session(name: str, mode: str, ...) -> tuple[str, int]:
-def validate_hostname(host: str) -> str:
+```bash
+# Function: function_name
+# Description: What this function does. Multi-line descriptions
+#              should be aligned like this.
+# Parameters:
+#   $1 - Description of first parameter
+#   $2 - Description of second parameter (optional, default: value)
+# Returns: 0 on success, 1 on failure
+# Outputs: What it writes to stdout (if anything)
+function_name() {
+    ...
+}
 ```
 
 ### Input Validation
 
-All user-controlled strings must pass through a whitelist validator before reaching any command builder, file operation, or subprocess call. The validators are in `validation.py`:
+All user-supplied inputs **must** pass through validation before use:
 
-- `validate_port()` for port numbers
-- `validate_hostname()` for hosts/IPs
-- `validate_protocol()` for protocol strings
-- `validate_socat_opts()` for extra socat options
-- `validate_session_name()` for session names
-- `validate_file_path()` for file paths
+- Ports → `validate_port`
+- Hostnames/IPs → `validate_hostname`
+- Protocols → `validate_protocol`
+- File paths → `validate_file_path`
+- Session IDs → `validate_session_id`
+
+Never interpolate raw user input into socat command strings, file paths, or
+session file names without validation.
 
 ### Error Handling
 
-- `ValidationError` for all input validation failures
-- `RuntimeError` for launch/stop failures
-- `OSError` for filesystem and signal failures — catch and log, never propagate to crash
-- `SystemExit` caught by menu to prevent mode handler exits from killing interactive session
-- `KeyboardInterrupt` caught by menu for graceful return
-
-### Security Requirements
-
-These are **non-negotiable** for any contribution:
-
-- **No `shell=True`** on any subprocess call — argument lists only
-- **No `eval()`, `exec()`, `compile()`** on any data
-- **No `os.system()` or `os.popen()`** — use subprocess with argument lists
-- All user input through whitelist validators before subprocess
-- All file creation with explicit permission modes (0o600 for files, 0o700 for directories)
+- Use `set -euo pipefail` (already set at script top)
+- Arithmetic increments must use `((count++)) || true` under `set -e`
+- Functions that can legitimately fail should be called with `|| true` or
+  have their return value explicitly checked
+- Never use `$()` subshell capture for functions that launch background
+  processes (use global variables like `LAUNCH_SID` instead)
 
 ### CLI Flag Checklist
 
-When adding a new CLI flag:
+When adding a new CLI flag, ensure **all** of these are updated:
 
-1. Add to the relevant subparser(s) in `cli.py`
-2. Extract from `args` in the mode handler(s)
-3. Validate the value through an appropriate validator
-4. Pass through to the relevant core function
-5. Add to the help epilog examples
-6. Add to the menu prompt flow (if interactive)
-7. Add unit tests for the CLI parser
-8. Add integration tests for the mode handler
-9. Update documentation (USAGE_GUIDE, wiki Usage-Guide, CHANGELOG)
+- [ ] Mode argument parser (`case` block in `mode_*` function)
+- [ ] Command builder function (if the flag affects the socat command)
+- [ ] Help function (`show_*_help`)
+- [ ] Main help (`show_main_help`) if the flag is global
+- [ ] README.md options table for the relevant mode
+- [ ] USAGE_GUIDE.md if the flag is significant
+- [ ] CHANGELOG.md under `[Unreleased]`
+- [ ] At least one BATS test covering the new flag
 
 ---
 
@@ -373,77 +348,66 @@ When adding a new CLI flag:
 
 ### Branch Naming
 
+Use descriptive branch names with a category prefix:
+
 ```
-feature/my-new-feature
-fix/watchdog-crash-loop
-docs/update-usage-guide
-security/validate-cn-parameter
+feature/add-rate-limiting
+fix/cross-protocol-kill-on-stop
+docs/update-tunnel-examples
+test/add-watchdog-restart-tests
 ```
 
 ### Commit Messages
 
-```
-<type>: <description>
+Use conventional commit format:
 
-Types: feat, fix, refactor, docs, test, chore, security
-Examples:
-  feat: add IPv6-only listener support
-  fix: watchdog crash loop on duplicate port binding
-  security: add whitelist validation on tunnel CN parameter
-  docs: expand USAGE_GUIDE with operational scenarios
-  test: add dual-stack stop isolation tests
 ```
+Add: --rate-limit flag for listen and forward modes
+
+Implements per-port connection rate limiting using socat's
+max-children option. Adds --rate-limit <N> to listen, batch,
+and forward mode parsers. Updates help text and adds 4 BATS tests.
+
+Closes #42
+```
+
+Prefixes: `Add:`, `Fix:`, `Change:`, `Remove:`, `Docs:`, `Test:`, `Refactor:`
 
 ### Pull Request Process
 
-1. Fork the repository
-2. Create a feature branch from `main`
-3. Make your changes with tests
-4. Run `make test` — all 510 tests must pass, 0 lint errors
-5. Update documentation and CHANGELOG
-6. Push to your fork
-7. Open a Pull Request with:
-   - Clear description of the change
-   - Motivation and context
-   - Testing performed
-   - Screenshots/output if applicable
+1. **Fork and branch**: Create a feature branch from `main`
+2. **Implement**: Make your changes following the coding standards above
+3. **Test**: Run `make test` — all 220 tests must pass
+4. **Lint**: Run `make lint` — no warnings
+5. **Document**: Update CHANGELOG.md, help text, and README/USAGE_GUIDE as needed
+6. **Commit**: Clear, descriptive commit messages
+7. **Push**: Push your branch to your fork
+8. **PR**: Open a Pull Request with:
+   - Description of what changed and why
+   - How it was tested
+   - Reference to any related issues
+   - Confirmation that `make test` passes
 
-### Code Review Checklist
-
-Before requesting review, verify:
-
-- [ ] All tests pass (`make test`)
-- [ ] Zero lint errors (`make lint`)
-- [ ] Type hints on all new functions
-- [ ] Google-style docstrings on all public functions
-- [ ] No `eval()`, `exec()`, or `shell=True`
-- [ ] All user input validated through whitelist validators
-- [ ] File permissions explicitly set (0o600/0o700)
-- [ ] Documentation updated (USAGE_GUIDE, wiki, CHANGELOG)
-- [ ] New CLI flags follow the CLI Flag Checklist above
+The PR template will pre-populate a checklist. All items must be checked before
+merge.
 
 ---
 
 ## Reporting Bugs
 
-1. Check [existing issues](https://github.com/Sandler73/Socat-Network-Operations-Manager/issues) first
-2. Open a new issue with:
-   - Python version (`python3 --version`)
-   - Operating system and version
-   - socat version (`socat -V | head -2`)
-   - Exact command run
-   - Full error output (stderr)
-   - Steps to reproduce
-   - Expected vs actual behavior
+Use the repository's **Issues** tab with the **Bug Report** template. Include:
+
+- socat_manager.sh version (`socat-manager --version`)
+- Operating system and version
+- Bash version (`bash --version`)
+- Steps to reproduce
+- Expected vs actual behavior
+- Relevant log output (from `logs/` directory)
 
 ---
 
 ## Security Vulnerabilities
 
-**Do NOT** open public GitHub issues for security vulnerabilities.
+**Do not open a public issue for security vulnerabilities.**
 
-Report security issues privately per the [Security Policy](SECURITY.md):
-1. Use GitHub Security Advisory
-2. Or contact the maintainer directly
-
-Include: affected version, component, description, reproduction steps, and impact assessment.
+See [SECURITY.md](SECURITY.md) for private reporting instructions.
