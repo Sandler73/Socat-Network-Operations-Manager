@@ -5,43 +5,39 @@
 <p align="center">
   <h1 align="center">Socat Network Operations Manager</h1>
   <p align="center">
-    <strong>Python Variant</strong><br>
-    Production-grade socat session manager for network operations.<br>
-    Listeners, bidirectional forwards, TLS tunnels, and transparent redirectors<br>
-    with unique Session IDs, protocol-aware lifecycle management, and zero external dependencies.
+    A comprehensive socat-based network listener, forwarder, tunneler, and traffic redirector<br>with reliability and multi-session management.
   </p>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.0-blue?style=flat-square" alt="Version 0.9.0">
-  <img src="https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/version-2.3.0-blue?style=flat-square" alt="Version 2.3.0">
+  <img src="https://img.shields.io/badge/shell-bash%204.4%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="Bash 4.4+">
   <img src="https://img.shields.io/badge/platform-linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
-  <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
   <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa?style=flat-square" alt="Code of Conduct">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/ruff-passing-7B68EE?style=flat-square&logo=python&logoColor=white" alt="Ruff">
-  <img src="https://img.shields.io/badge/pytest-510%20tests-blue?style=flat-square" alt="510 Tests">
-  <img src="https://img.shields.io/badge/coverage-68%25-yellow?style=flat-square" alt="Coverage">
-  <img src="https://img.shields.io/badge/dependencies-0%20runtime-brightgreen?style=flat-square" alt="Zero Dependencies">
+  <img src="https://img.shields.io/badge/ShellCheck-passing-7B68EE?style=flat-square&logo=gnubash&logoColor=white" alt="ShellCheck">
+  <img src="https://github.com/Sandler73/Socat-Network-Operations-Manager/actions/workflows/test.yml/badge.svg" alt="CI Tests">
+  <img src="https://img.shields.io/badge/BATS-220%20tests-blue?style=flat-square" alt="220 BATS Tests">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/last-commit/Sandler73/Socat-Network-Operations-Manager?style=flat-square&color=FF6F3C&label=last%20commit" alt="Last Commit">
+  <img src="https://img.shields.io/badge/maintained-yes-brightgreen?style=flat-square" alt="Maintained">
+  <img src="https://img.shields.io/badge/PRs-welcome-azure?style=flat-square" alt="PRs Welcome">
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#operational-modes">Modes</a> ·
-  <a href="docs/USAGE_GUIDE.md">Usage Guide</a> ·
-  <a href="docs/CHANGELOG.md">Changelog</a> ·
-  <a href="docs/SECURITY.md">Security</a> ·
+  <a href="USAGE_GUIDE.md">Usage Guide</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="SECURITY.md">Security</a> ·
   <a href="#testing">Testing</a> ·
   <a href="#contributing">Contributing</a>
 </p>
-
----
-
-**[Full Documentation Wiki](docs/wiki/)** — detailed guides, architecture with Mermaid diagrams, operational scenarios, and exhaustive developer reference.
 
 ---
 
@@ -77,16 +73,15 @@
 - [Version History](#version-history)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
+- [Support](#support)
 
 ---
 
 ## Overview
 
-`socat-manager` provides a unified command-line interface and interactive menu for managing socat-based network operations. It wraps socat's complex syntax into seven structured operational modes, adding session tracking, process group isolation, protocol-aware lifecycle management, traffic capture, and automatic restart capabilities.
+`socat_manager.sh` provides a unified command-line interface for managing socat-based network operations. It wraps socat's powerful but complex syntax into six intuitive operational modes, adding session tracking, process group isolation, protocol-aware lifecycle management, traffic capture, and automatic restart capabilities.
 
-This is a complete Python 3.12+ reimplementation of [socat_manager.sh](https://github.com/Sandler73/Socat-Network-Operations-Manager) v2.3.0 (4,470 lines of bash, 91 functions) with full functional parity. The Python variant uses only the standard library at runtime — zero external PyPI dependencies.
-
-Every launched socat process receives a unique 8-character hex **Session ID**, is placed in its own **process group** via `os.setsid()`, and is tracked in a persistent `.session` metadata file. This enables reliable status queries and clean shutdowns across terminal sessions and script invocations — you can launch a redirector in one terminal, check its status from another, and stop it from a third.
+Every launched socat process receives a unique 8-character hex **Session ID**, is placed in its own **process group** via `setsid`, and is tracked in a persistent `.session` metadata file. This enables reliable status queries and clean shutdowns across terminal sessions and script invocations — you can launch a redirector in one terminal, check its status from another, and stop it from a third.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -96,18 +91,17 @@ Every launched socat process receives a unique 8-character hex **Session ID**, i
 
 | | Feature | Description |
 |---|---------|-------------|
-| 🔀 | **Seven Operational Modes** | listen, batch, forward, tunnel, redirect — plus status and stop for lifecycle management |
+| 🔀 | **Six Operational Modes** | listen, batch, forward, tunnel, redirect — plus status and stop for lifecycle management |
 | 🔌 | **Protocol Flexibility** | TCP4, TCP6, UDP4, UDP6 individually (`--proto`) or both TCP+UDP simultaneously (`--dual-stack`) |
 | 📡 | **Traffic Capture** | Verbose hex dump logging (`--capture`) on all modes — listen, batch, forward, tunnel, redirect |
 | 🔖 | **Session Tracking** | Unique 8-char hex Session IDs with persistent `.session` metadata files |
-| 🔒 | **Process Isolation** | Each socat process in its own process group via `os.setsid()` with direct PID access |
+| 🔒 | **Process Isolation** | Each socat process in its own process group via `setsid` with PID-file handoff |
 | 🛡️ | **Protocol-Aware Stop** | Stopping TCP does not affect UDP on the same port, and vice versa |
 | 🖥️ | **Interactive Menu** | Run with no arguments for a guided, menu-driven interface with validation and cancel support |
 | ⚡ | **Non-Blocking Launch** | Script returns to prompt immediately — no terminal blocking |
-| 🔄 | **Watchdog Auto-Restart** | Monitor-first design with configurable exponential backoff and max restarts |
+| 🔄 | **Watchdog Auto-Restart** | Exponential backoff (1s→60s cap) with configurable max restarts |
 | 📦 | **Batch Operations** | Launch listeners on port lists, ranges, or config files in a single command |
-| 📝 | **Structured Logging** | Dual-output (file + console) with correlation IDs and per-session audit trails |
-| 🐍 | **Zero Dependencies** | Python standard library only — no pip packages required at runtime |
+| 📝 | **Structured Logging** | OWASP/NIST SP 800-92 compliant format with correlation IDs and per-session audit trails |
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -117,40 +111,37 @@ Every launched socat process receives a unique 8-character hex **Session ID**, i
 
 ### Core Capabilities
 
-- **Seven operational modes**: listen, batch, forward, tunnel, redirect, status, stop
+- **Six operational modes**: listen, batch, forward, tunnel, redirect, status, stop
 - **Protocol flexibility**: TCP4, TCP6, UDP4, UDP6 individually via `--proto`, or both TCP and UDP simultaneously via `--dual-stack`
 - **Traffic capture**: Verbose hex dump logging (`--capture`) available on all operational modes (listen, batch, forward, tunnel, redirect)
 - **Session management**: Unique 8-char hex Session IDs with `.session` metadata files for persistent tracking
-- **Process group isolation**: Each socat process launched via `os.setsid()` in `subprocess.Popen` for reliable cross-invocation tracking
+- **Process group isolation**: Each socat process launched via `setsid` with PID-file handoff for reliable cross-invocation tracking
 - **Protocol-aware stop**: Stopping a TCP session does not affect a UDP session on the same port, and vice versa
 - **Non-blocking launch**: Script returns to prompt immediately after launching sessions — no terminal blocking
-- **Watchdog auto-restart**: Monitor-first design (no duplicate launch), configurable exponential backoff (1s, 2s, 4s... 60s cap), configurable max restarts and initial backoff via `--max-restarts` and `--backoff`
-- **Interactive menu**: No-args launches a full-featured menu with guided input, validation, dependency checking, socat-opts examples, configurable watchdog prompts, paired forward after listener, and cancel support at every prompt
+- **Watchdog auto-restart**: Exponential backoff (1s, 2s, 4s... 60s cap) with configurable max restarts
+- **Interactive menu**: No-args launches a full-featured menu with guided input, validation, dependency checking, and cancel support
 - **Batch operations**: Launch listeners on port lists, ranges, or config files in a single command
-- **Standalone runner**: `python3 socat-manager.py` — no pip install, no venv, no system modification
-- **Cross-variant interoperability**: Session files use the same KEY=VALUE format as the bash variant — both can read each other's session files
 
 ### Input Validation and Security
 
-- 9 whitelist-based validators at the trust boundary: ports, hostnames, protocols, file paths, socat options, session names, session IDs, port ranges, port lists
-- Command injection prevention: `subprocess.Popen` with argument lists only — `shell=True` never appears in the 6,779-line codebase
-- No `eval()`, `exec()`, `compile()`, or `__import__()` anywhere
-- Shell metacharacters (`` ; | & $ ` ( ) { } [ ] < > ! # ``) blocked in hostnames and file paths
-- Session directory permissions restricted to 0o700
-- Session files restricted to 0o600
-- Private key files restricted to 0o600
-- Capture log files restricted to 0o600
-- Only socat processes targeted during port-based fallback kill (process name verification via `/proc/{pid}/comm`)
+- Whitelist-based port, hostname, protocol, file path, and session ID validation
+- Command injection prevention on all user-supplied inputs (hostnames, paths)
+- Path traversal protection on file path parameters
+- Session directory permissions restricted to 700
+- Session files restricted to 600
+- Private key files restricted to 600
+- Only socat processes targeted during port-based fallback kill (process name verification)
+- No shell metacharacters permitted in hostname or path parameters
 
-See [SECURITY.md](docs/SECURITY.md) for the full STRIDE threat model, 7-layer defense-in-depth analysis, and secure deployment guidelines.
+See [SECURITY.md](SECURITY.md) for the full threat model, implemented controls, and secure deployment guidelines.
 
 ### Logging and Audit
 
-- Structured master execution log with correlation IDs
+- Structured master execution log with correlation IDs (OWASP/NIST SP 800-92 compliant format)
 - Per-session log files for independent audit trails
+- Per-session error logs for stderr capture
 - Traffic capture logs (socat `-v` hex dumps) per session and protocol
 - Console output with color-coded severity levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- Terminal-aware: ANSI colors gated on TTY detection (`sys.stderr.isatty()`)
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -161,37 +152,34 @@ See [SECURITY.md](docs/SECURITY.md) for the full STRIDE threat model, 7-layer de
 ### Process Launch Model
 
 ```
-socat-manager (launcher)
+socat_manager.sh (launcher)
     │
-    ├── subprocess.Popen(cmd, preexec_fn=os.setsid, close_fds=True)
+    ├── setsid bash -c 'echo $$ > pidfile; exec socat ...' &>/dev/null &
     │       │
     │       └── socat (PID == PGID, session leader)
     │               ├── socat fork (child for connection 1)
     │               ├── socat fork (child for connection 2)
     │               └── ...
     │
-    ├── Popen.pid gives real socat PID directly
+    ├── Reads real socat PID from pidfile
     ├── Registers session: SID, PID, PGID, protocol, port, command
-    ├── Returns (sid, pid) tuple to caller
     └── Returns to prompt (non-blocking)
 ```
 
 **Key design decisions:**
 
-1. **`os.setsid` as `preexec_fn`** creates a new process group. Socat becomes the group leader (PID == PGID), so `os.killpg(pgid, signal)` terminates socat and all its `fork` children in one operation.
+1. **`setsid`** creates a new process group. Socat becomes the group leader (PID == PGID), so `kill -TERM -${PGID}` terminates socat and all its `fork` children in one operation.
 
-2. **Direct PID access via `Popen.pid`**: Unlike the bash variant which requires a PID-file handoff pattern (setsid wrapper PID problem), Python's `Popen.pid` gives the real socat PID directly. No staging files, no polling, no race conditions.
+2. **PID-file handoff**: The inner `bash -c` writes `$$` to a staging file before `exec socat`. Since `exec` preserves the PID, the parent reads the actual socat PID (not a dead wrapper PID).
 
-3. **`launch_socat_session()` returns `(sid, pid)` tuple**: The PID is passed to the watchdog for monitoring. This eliminates the critical bug where the watchdog would launch a duplicate socat on an already-bound port.
+3. **No `$()` subshell**: Session IDs are returned via a global variable (`LAUNCH_SID`) rather than command substitution, preventing stdout file descriptor inheritance that would block the terminal.
 
-4. **`close_fds=True`** prevents file descriptor leakage from the management script to the socat process.
-
-5. **`subprocess.Popen` with argument lists only**: The `cmd` parameter is always `list[str]`, never a shell string. `shell=True` is never used.
+4. **Full detachment via `setsid`**: The process runs in a new session and process group, so it's not in the parent shell's job table. Combined with `&>/dev/null` redirections, no file descriptors or job references leak back to the launching terminal.
 
 ### Session File Format
 
 ```
-SESSION_FILE_VERSION=v2.3
+# socat_manager session file v2.2
 SESSION_ID=a1b2c3d4
 SESSION_NAME=redir-tcp4-8443-example.com-443
 PID=12345
@@ -201,8 +189,8 @@ PROTOCOL=tcp4
 LOCAL_PORT=8443
 REMOTE_HOST=example.com
 REMOTE_PORT=443
-SOCAT_CMD=socat TCP4-LISTEN:8443,reuseaddr,fork,backlog=128,keepalive TCP4:example.com:443
-STARTED=2026-03-30T14:30:00+00:00
+SOCAT_CMD=socat -v TCP4-LISTEN:8443,reuseaddr,fork,backlog=128 TCP4:example.com:443
+STARTED=2026-03-20T14:30:00
 CORRELATION=a1b2c3d4
 LAUNCHER_PID=9999
 ```
@@ -210,15 +198,15 @@ LAUNCHER_PID=9999
 ### Stop Sequence
 
 ```
-1. Read session metadata (PID, PGID, PROTOCOL, PORT)
-2. Signal watchdog via .stop file (tells watchdog: do not restart)
-3. SIGTERM entire process group: os.killpg(pgid, SIGTERM)
-4. SIGTERM specific PID + children: os.kill(pid, SIGTERM); pkill -TERM -P pid
+1. Read session metadata (PID, PGID, PROTOCOL)
+2. Signal watchdog via .stop file (if applicable)
+3. SIGTERM entire process group: kill -TERM -${PGID}
+4. SIGTERM specific PID + children: kill -TERM ${PID}; pkill -TERM -P ${PID}
 5. Wait grace period (5 seconds, checking every 0.5s)
-6. SIGKILL if still alive: os.killpg + os.kill + pkill -KILL -P
-7. Fallback: protocol-scoped port-based kill via ss (socat processes only)
+6. SIGKILL if still alive: kill -KILL -${PGID}
+7. Fallback: protocol-scoped port-based kill via ss/lsof (socat processes only)
 8. Verify port freed (protocol-scoped, avoids cross-protocol interference)
-9. Remove session file + .stop + .launching files after confirmed dead
+9. Remove session file after confirmed dead
 ```
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
@@ -231,8 +219,9 @@ LAUNCHER_PID=9999
 
 | Dependency | Purpose | Install |
 |------------|---------|---------|
-| **Python** 3.12+ | Framework runtime | Pre-installed on Ubuntu 24.04+; `sudo apt-get install python3` |
 | **socat** | Core network operations | `sudo apt-get install -y socat` |
+| **bash** 4.4+ | Script execution (associative arrays, `setsid`) | Pre-installed on most Linux |
+| **coreutils** | `setsid`, `kill`, `sleep`, `date`, `sha256sum` | Pre-installed on most Linux |
 
 ### Optional
 
@@ -240,31 +229,32 @@ LAUNCHER_PID=9999
 |------------|---------|---------|
 | **openssl** | TLS certificate generation (tunnel mode) | `sudo apt-get install -y openssl` |
 | **ss** (iproute2) | Port status checking, session verification | `sudo apt-get install -y iproute2` |
+| **netstat** (net-tools) | Fallback port status checking | `sudo apt-get install -y net-tools` |
+| **lsof** | Fallback process-by-port discovery | `sudo apt-get install -y lsof` |
 | **pstree** (psmisc) | Process tree display in `status` detail view | `sudo apt-get install -y psmisc` |
-| **flock** (util-linux) | Advisory file locking for session concurrency | Pre-installed on most Linux |
 
 ### System Requirements
 
-- Linux kernel (any modern distribution)
-- Python 3.12+ (uses `match/case`, `slots=True`, `from __future__ import annotations`)
+- Linux kernel with `/proc/sys/kernel/random/uuid` (session ID generation)
 - Root/sudo for privileged ports (<1024)
-- Zero external PyPI packages at runtime (standard library only)
+- Bash 4.4+ for associative arrays and `${var,,}` lowercase expansion
 
 ### Compatibility
 
-Designed for the same 8 environments verified by the bash variant's CI pipeline:
+Tested via [GitHub Actions CI](.github/workflows/test.yml) on every push across 8 environments:
 
-| Distribution | Version | Python | Status | Notes |
-|-------------|---------|--------|--------|-------|
-| **Ubuntu** | 22.04 LTS | 3.12+ | ✅ Expected | May need `python3.12` package |
-| **Ubuntu** | 24.04 LTS | 3.12 | ✅ Expected | Python 3.12 pre-installed |
-| **Debian** | 12 (Bookworm) | 3.12+ | ✅ Expected | May need `python3.12` package |
-| **Kali Linux** | Rolling | 3.12+ | ✅ Expected | socat typically pre-installed |
-| **Rocky Linux** | 9 | 3.12+ | ✅ Expected | May need `python3.12` package |
-| **AlmaLinux** | 9 | 3.12+ | ✅ Expected | May need `python3.12` package |
-| **Arch Linux** | Rolling | 3.12+ | ✅ Expected | Python typically current |
+| Distribution | Version | Bash | CI Status | Package Manager | Notes |
+|-------------|---------|------|-----------|-----------------|-------|
+| **Ubuntu** | 22.04 LTS | 5.1 | ✅ Verified | `apt` | CI runner (native) |
+| **Ubuntu** | 24.04 LTS | 5.2 | ✅ Verified | `apt` | CI runner (native) |
+| **Ubuntu** | 24.04 LTS | 4.4 | ✅ Verified | `apt` | Minimum bash version (compiled from source) |
+| **Debian** | 12 (Bookworm) | 5.2 | ✅ Verified | `apt` | Docker container |
+| **Kali Linux** | Rolling | 5.2 | ✅ Verified | `apt` | Docker container; socat typically pre-installed |
+| **Rocky Linux** | 9 | 5.1 | ✅ Verified | `dnf` | Docker container; RHEL binary-compatible |
+| **AlmaLinux** | 9 | 5.1 | ✅ Verified | `dnf` | Docker container; RHEL binary-compatible |
+| **Arch Linux** | Rolling | 5.2 | ✅ Verified | `pacman` | Docker container |
 
-**Also expected to work** on any Linux distribution with Python 3.12+ and socat, including Fedora, openSUSE, Amazon Linux 2023, and Raspberry Pi OS.
+**Also expected to work** on any Linux distribution with bash 4.4+ and standard coreutils, including Fedora, openSUSE, Amazon Linux 2023, and Raspberry Pi OS. RHEL 8/9 are supported via the binary-compatible Rocky Linux and AlmaLinux test coverage.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -278,87 +268,75 @@ sudo apt-get update && sudo apt-get install -y socat
 
 # 2. Clone or download
 git clone https://github.com/Sandler73/Socat-Network-Operations-Manager.git
-cd Socat-Network-Operations-Manager
+cd socat-manager
 
-# 3. Run directly (no installation needed)
-python3 socat-manager.py
+# 3. Install system-wide (or skip this and run directly with ./socat_manager.sh)
+sudo make install
 
-# Or install system-wide:
-pip install -e .
-socat-manager
+# 4. Launch the interactive menu (no arguments)
+sudo socat-manager
 
-# 4. CLI mode:
+# Or use CLI mode directly:
 socat-manager listen --port 8080    # Start a TCP listener
 socat-manager status                # Check session status
 socat-manager stop --all            # Stop everything
-socat-manager help                  # Full help
-socat-manager version               # Version info
 ```
 
 **Interactive menu**: Running with no arguments launches a guided, menu-driven interface with validated input and cancel support (type `q` at any prompt to return to the main menu). Also accessible via `socat-manager menu`.
 
-**Direct CLI**: All commands work exactly as shown — `socat-manager listen --port 8080`, `socat-manager status`, etc. Full CLI reference in the [Usage Guide](docs/USAGE_GUIDE.md).
+**Direct CLI**: All commands work exactly as shown — `socat-manager listen --port 8080`, `socat-manager status`, etc. Full CLI reference in the [Usage Guide](USAGE_GUIDE.md).
 
-**Standalone**: Run directly without installing — `python3 socat-manager.py`. No pip, no venv, no system modification.
+**Alternative**: Run directly without installing — `chmod +x socat_manager.sh && sudo ./socat_manager.sh`
 
 ### Mode Examples
 
-Quick copy-paste examples for each operational mode. See the [Usage Guide](docs/USAGE_GUIDE.md) for complete options, dual-stack configuration, and operational scenarios.
+Quick copy-paste examples for each operational mode. See the [Usage Guide](USAGE_GUIDE.md) for complete options, dual-stack configuration, and operational scenarios.
 
 **Listen** — Start a TCP/UDP listener that captures incoming data:
-
 ```bash
 socat-manager listen --port 8080
 socat-manager listen --port 5353 --proto udp4
 socat-manager listen --port 8080 --dual-stack --capture
-socat-manager listen --port 8080 --watchdog --max-restarts 5 --backoff 2
 ```
 
 **Batch** — Launch listeners on multiple ports simultaneously:
-
 ```bash
 socat-manager batch --ports 8080,8081,8082
-socat-manager batch --range 9000-9010 --dual-stack
-socat-manager batch --file conf/ports.conf --capture --watchdog
+socat-manager batch --range 9000-9010
+socat-manager batch --file conf/ports.conf --proto udp4
 ```
 
 **Forward** — Relay traffic from a local port to a remote host:
-
 ```bash
 socat-manager forward --lport 8080 --rhost 10.0.0.5 --rport 80
 socat-manager forward --lport 5353 --rhost 10.0.0.1 --rport 53 --proto udp4
-socat-manager forward --lport 8080 --rhost 10.0.0.1 --rport 53 --remote-proto udp4
+socat-manager forward --lport 443 --rhost backend.local --rport 8443 --capture
 ```
 
 **Tunnel** — Create a TLS-encrypted tunnel (auto-generates certificates):
-
 ```bash
 socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --cn myhost.local
+socat-manager tunnel --port 8443 --rhost db.internal --rport 3306 --capture
 ```
 
 **Redirect** — Transparent port redirection with optional traffic capture:
-
 ```bash
-socat-manager redirect --lport 8443 --rhost example.com --rport 443
-socat-manager redirect --lport 53 --rhost 8.8.8.8 --rport 53 --proto udp4 --dual-stack
+socat-manager redirect --lport 80 --rhost 192.168.1.10 --rport 8080
+socat-manager redirect --lport 53 --rhost 10.0.0.1 --rport 5353 --proto udp4
+socat-manager redirect --lport 443 --rhost backend --rport 8443 --dual-stack
 ```
 
 **Status** — View active sessions and session details:
-
 ```bash
 socat-manager status
-socat-manager status abcd1234     # Detail by session ID
-socat-manager status 8080         # Detail by port
-socat-manager status --cleanup    # Remove dead session files
+socat-manager status --detail
+socat-manager status --cleanup
 ```
 
-**Stop** — Terminate sessions by ID, name, port, PID, or all at once:
-
+**Stop** — Terminate sessions by name, port, PID, or all at once:
 ```bash
-socat-manager stop abcd1234
 socat-manager stop --all
-socat-manager stop --name tcp4-8080
+socat-manager stop --name listen-tcp4-8080
 socat-manager stop --port 8080
 socat-manager stop --pid 12345
 ```
@@ -375,25 +353,22 @@ Start a single TCP or UDP listener that captures incoming data to a log file.
 
 ```bash
 # Basic TCP listener
-socat-manager listen --port 8080
+./socat_manager.sh listen --port 8080
 
 # UDP listener
-socat-manager listen --port 5353 --proto udp4
+./socat_manager.sh listen --port 5353 --proto udp4
 
 # TCP + UDP simultaneously
-socat-manager listen --port 8080 --dual-stack
+./socat_manager.sh listen --port 8080 --dual-stack
 
 # With traffic capture
-socat-manager listen --port 8080 --capture
+./socat_manager.sh listen --port 8080 --capture
 
 # Bind to specific interface
-socat-manager listen --port 8080 --bind 192.168.1.100
+./socat_manager.sh listen --port 8080 --bind 192.168.1.100
 
-# With auto-restart (configurable)
-socat-manager listen --port 8080 --watchdog --max-restarts 20 --backoff 2
-
-# With extra socat options
-socat-manager listen --port 8080 --socat-opts "reuseaddr,nodelay"
+# With auto-restart
+./socat_manager.sh listen --port 8080 --watchdog
 ```
 
 **Options:**
@@ -405,13 +380,10 @@ socat-manager listen --port 8080 --socat-opts "reuseaddr,nodelay"
 | `--dual-stack` | Also start listener on alternate protocol |
 | `--capture` | Enable verbose hex dump traffic logging |
 | `--bind <ADDR>` | Bind to specific IP address |
-| `--name <NAME>` | Custom session name |
+| `--name <n>` | Custom session name |
 | `--logfile <PATH>` | Custom data log file path |
 | `--watchdog` | Enable auto-restart on crash |
-| `--max-restarts <N>` | Maximum watchdog restart attempts (default: 10) |
-| `--backoff <N>` | Initial watchdog backoff delay in seconds (default: 1) |
 | `--socat-opts <OPTS>` | Additional socat address options |
-| `-v, --verbose` | Enable debug logging |
 
 ### batch Mode
 
@@ -419,22 +391,22 @@ Start multiple listeners from port lists, ranges, or config files.
 
 ```bash
 # Port list
-socat-manager batch --ports "21,22,23,25,80,443"
+sudo ./socat_manager.sh batch --ports "21,22,23,25,80,443"
 
 # Port range
-socat-manager batch --range 8000-8010
+./socat_manager.sh batch --range 8000-8010
 
 # Port range with dual-stack and capture
-socat-manager batch --range 8000-8005 --dual-stack --capture
+./socat_manager.sh batch --range 8000-8005 --dual-stack --capture
 
 # UDP-only batch
-socat-manager batch --ports "5353,5354,5355" --proto udp4
+./socat_manager.sh batch --ports "5353,5354,5355" --proto udp4
 
 # From config file
-socat-manager batch --file conf/ports.conf --watchdog
+./socat_manager.sh batch --config ./ports.conf
 ```
 
-**Config file format** (`conf/ports.conf`):
+**Config file format** (`ports.conf`):
 
 ```
 # One port per line. Comments and blank lines are ignored.
@@ -450,13 +422,11 @@ socat-manager batch --file conf/ports.conf --watchdog
 |--------|-------------|
 | `--ports <LIST>` | Comma-separated port list |
 | `--range <START-END>` | Port range (max 1000 ports) |
-| `--file <FILE>` | Config file (one port per line) |
+| `--config <FILE>` | Config file (one port per line) |
 | `--proto <PROTO>` | Protocol for all listeners (default: tcp4) |
 | `--dual-stack` | Start both TCP and UDP per port |
 | `--capture` | Enable traffic capture for all listeners |
 | `--watchdog` | Enable auto-restart for all listeners |
-| `--max-restarts <N>` | Maximum restart attempts per listener |
-| `--backoff <N>` | Initial backoff delay in seconds |
 
 ### forward Mode
 
@@ -464,19 +434,19 @@ Create a bidirectional port forwarder between a local port and a remote target.
 
 ```bash
 # TCP forwarder
-socat-manager forward --lport 8080 --rhost 192.168.1.10 --rport 80
+./socat_manager.sh forward --lport 8080 --rhost 192.168.1.10 --rport 80
 
 # UDP forwarder (e.g., DNS relay)
-socat-manager forward --lport 5353 --rhost 10.0.0.1 --rport 53 --proto udp4
+./socat_manager.sh forward --lport 5353 --rhost 10.0.0.1 --rport 53 --proto udp4
 
 # Dual-stack forwarder
-socat-manager forward --lport 8080 --rhost 192.168.1.10 --rport 80 --dual-stack
+./socat_manager.sh forward --lport 8080 --rhost 192.168.1.10 --rport 80 --dual-stack
 
 # With traffic capture
-socat-manager forward --lport 8080 --rhost 192.168.1.10 --rport 80 --capture
+./socat_manager.sh forward --lport 8080 --rhost 192.168.1.10 --rport 80 --capture
 
 # Cross-protocol forwarding (TCP listen → UDP remote)
-socat-manager forward --lport 8080 --rhost 10.0.0.5 --rport 53 --proto tcp4 --remote-proto udp4
+./socat_manager.sh forward --lport 8080 --rhost 10.0.0.5 --rport 53 --proto tcp4 --remote-proto udp4
 ```
 
 **Options:**
@@ -487,13 +457,12 @@ socat-manager forward --lport 8080 --rhost 10.0.0.5 --rport 53 --proto tcp4 --re
 | `--rhost <HOST>` | Remote host to forward to (required) |
 | `--rport <PORT>` | Remote port to forward to (required) |
 | `--proto <PROTO>` | Listen protocol (default: tcp4) |
-| `--remote-proto <PROTO>` | Remote protocol (default: matches `--proto`). Enables cross-protocol forwarding. |
+| `--remote-proto <PROTO>` | Remote protocol (default: matches `--proto`) |
 | `--dual-stack` | Also start forwarder on alternate protocol |
 | `--capture` | Enable traffic capture |
-| `--name <NAME>` | Custom session name |
+| `--logfile <PATH>` | Custom capture log file |
+| `--name <n>` | Custom session name |
 | `--watchdog` | Enable auto-restart |
-| `--max-restarts <N>` | Maximum restart attempts |
-| `--backoff <N>` | Initial backoff delay in seconds |
 
 ### tunnel Mode
 
@@ -501,20 +470,20 @@ Create an encrypted TLS/SSL tunnel. Accepts TLS connections on a local port and 
 
 ```bash
 # Basic tunnel (auto-generates self-signed cert)
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22
+./socat_manager.sh tunnel --port 4443 --rhost 10.0.0.5 --rport 22
 
 # With custom certificate
-socat-manager tunnel --port 8443 --rhost db.internal --rport 5432 \
+./socat_manager.sh tunnel --port 8443 --rhost db.internal --rport 5432 \
     --cert /etc/ssl/cert.pem --key /etc/ssl/key.pem
 
 # Tunnel with plaintext UDP forwarder on same port
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --dual-stack
+./socat_manager.sh tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --dual-stack
 
 # With capture (logs decrypted traffic)
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --capture
+./socat_manager.sh tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --capture
 
 # Custom Common Name for self-signed cert
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --cn myhost.local
+./socat_manager.sh tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --cn myhost.local
 ```
 
 > **Note:** TLS tunnels are TCP-only by design. `--proto udp4` will produce a clear error with guidance to use `forward --proto udp4` instead. `--dual-stack` adds a plaintext UDP forwarder with a warning that UDP traffic is not encrypted.
@@ -529,9 +498,11 @@ socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --cn myhost.local
 | `--cert <PATH>` | Path to PEM certificate file |
 | `--key <PATH>` | Path to PEM private key file |
 | `--cn <CN>` | Common Name for self-signed cert (default: localhost) |
+| `--proto <PROTO>` | Validates protocol (tcp accepted; udp rejected with guidance) |
 | `--dual-stack` | Also start plaintext UDP forwarder on same port |
 | `--capture` | Enable capture of decrypted traffic |
-| `--name <NAME>` | Custom session name |
+| `--logfile <PATH>` | Custom capture log file |
+| `--name <n>` | Custom session name |
 | `--watchdog` | Enable auto-restart |
 
 **Connecting to a tunnel:**
@@ -546,16 +517,19 @@ Redirect/proxy traffic transparently between a local port and a remote target. O
 
 ```bash
 # TCP redirect
-socat-manager redirect --lport 8443 --rhost example.com --rport 443
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443
 
 # UDP redirect (e.g., DNS proxy)
-socat-manager redirect --lport 5353 --rhost 8.8.8.8 --rport 53 --proto udp4
+./socat_manager.sh redirect --lport 5353 --rhost 8.8.8.8 --rport 53 --proto udp4
 
 # Dual-stack redirect
-socat-manager redirect --lport 8443 --rhost example.com --rport 443 --dual-stack
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443 --dual-stack
 
 # With traffic capture
-socat-manager redirect --lport 8443 --rhost example.com --rport 443 --capture
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443 --capture
+
+# Full dual-stack with capture
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443 --dual-stack --capture
 ```
 
 **Options:**
@@ -568,7 +542,8 @@ socat-manager redirect --lport 8443 --rhost example.com --rport 443 --capture
 | `--proto <PROTO>` | Protocol: tcp, tcp4, tcp6, udp, udp4, udp6 (default: tcp4) |
 | `--dual-stack` | Also start redirector on alternate protocol |
 | `--capture` | Enable traffic capture (hex dump) |
-| `--name <NAME>` | Custom session name |
+| `--logfile <PATH>` | Custom capture log file |
+| `--name <n>` | Custom session name |
 | `--watchdog` | Enable auto-restart |
 
 ### status Mode
@@ -577,25 +552,38 @@ Display all active managed sessions or detailed information for a specific sessi
 
 ```bash
 # List all sessions
-socat-manager status
+./socat_manager.sh status
 
 # Detail by Session ID
-socat-manager status a1b2c3d4
+./socat_manager.sh status a1b2c3d4
 
 # Detail by session name
-socat-manager status redir-tcp4-8443-example.com-443
+./socat_manager.sh status redir-tcp4-8443-example.com-443
 
 # Detail by port (shows all protocols on that port)
-socat-manager status 8443
+./socat_manager.sh status 8443
 
-# Include debug output
-socat-manager status -v
+# Include system-level listener info
+./socat_manager.sh status --verbose
 
 # Clean up dead session files
-socat-manager status --cleanup
+./socat_manager.sh status --cleanup
 ```
 
-**Detail view** (when querying by SID, name, or port) shows 5 sections: session metadata, process status with process tree (pstree/ps), port binding status per protocol (ss), socat command string, and associated log file paths.
+**Status table output example:**
+
+```
+  ─── Active Sessions ───
+
+  SID        SESSION                      PID      PGID     MODE       PROTO  LPORT  REMOTE                 STATUS
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  a1b2c3d4   redir-tcp4-8443-example.com  12345    12345    redirect   tcp4   8443   example.com:443        ALIVE
+  e5f67890   redir-udp4-8443-example.com  12346    12346    redirect   udp4   8443   example.com:443        ALIVE
+
+  Sessions: 2 alive, 0 dead, 2 total
+```
+
+**Detail view** (when querying by SID, name, or port) includes: all session metadata fields, process tree (via `pstree`), port binding status per protocol, socat command string, and associated log file paths.
 
 ### stop Mode
 
@@ -603,19 +591,19 @@ Stop one or more sessions by session ID, name, port, PID, or all.
 
 ```bash
 # Stop by Session ID
-socat-manager stop a1b2c3d4
+./socat_manager.sh stop a1b2c3d4
 
 # Stop by session name
-socat-manager stop --name redir-tcp4-8443-example.com-443
+./socat_manager.sh stop --name redir-tcp4-8443-example.com-443
 
 # Stop all sessions on a port (both protocols if dual-stack)
-socat-manager stop --port 8443
+./socat_manager.sh stop --port 8443
 
 # Stop by PID
-socat-manager stop --pid 12345
+./socat_manager.sh stop --pid 12345
 
 # Stop everything
-socat-manager stop --all
+./socat_manager.sh stop --all
 ```
 
 > **Protocol isolation:** Stopping a TCP session on port 8443 does **not** affect a UDP session on the same port. Each protocol's stop operation is scoped to its own protocol only. The `--port` flag is the exception — it stops all sessions on that port across all protocols.
@@ -634,14 +622,9 @@ These options are available on all operational modes:
 | `--dual-stack` | Launch sessions on both TCP and UDP simultaneously. Each gets its own Session ID. |
 | `--capture` | Enable socat `-v` verbose hex dump traffic logging. Capture log per session/protocol. |
 | `--watchdog` | Enable automatic restart with exponential backoff on process crash. |
-| `--max-restarts <N>` | Maximum watchdog restart attempts (default: 10). |
-| `--backoff <N>` | Initial watchdog backoff delay in seconds (default: 1). Doubles each restart up to 60s cap. |
-| `--name <NAME>` | Custom session name (default: auto-generated from mode-proto-port). |
 | `-v, --verbose` | Enable DEBUG-level console output. |
 | `-h, --help` | Show context-sensitive help (per mode). |
 | `--version` | Show version string and exit. |
-| `help` | Show full help with examples, session management, protocol guide. |
-| `version` | Show version number. |
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -649,15 +632,17 @@ These options are available on all operational modes:
 
 ## Session Management
 
-Every socat process launched by `socat-manager` receives:
+Every socat process launched by `socat_manager.sh` receives:
 
-1. A **unique 8-character hex Session ID** (e.g., `a1b2c3d4`) generated from `uuid.uuid4().hex[:8]` — the first 8 characters of a UUID4 hex string, with collision checking against existing session files (up to 100 attempts).
-2. A **`.session` metadata file** in the `sessions/` directory (permissions 0o600) containing PID, PGID, mode, protocol, ports, timestamps, full socat command, correlation ID, and launcher PID.
-3. An **isolated process group** via `os.setsid()`, making the socat process its own session leader and group leader. This enables `os.killpg(pgid, signal)` to terminate the entire process tree (parent + all forked children).
+1. A **unique 8-character hex Session ID** (e.g., `a1b2c3d4`) generated from `/proc/sys/kernel/random/uuid` with collision checking.
+
+2. A **`.session` metadata file** in the `sessions/` directory (permissions 600) containing PID, PGID, mode, protocol, ports, timestamps, full socat command, correlation ID, and launcher PID.
+
+3. An **isolated process group** via `setsid`, making the socat process its own session leader and group leader. This enables `kill -TERM -${PGID}` to terminate the entire process tree (parent + all forked children).
 
 Sessions persist across terminal exits and script invocations. The `status` command reads session files to report on all managed processes. The `stop` command uses PID, PGID, and protocol-scoped port verification to ensure complete shutdown.
 
-**Backward compatibility:** Legacy `.pid` session files from v1.x are automatically migrated to the v2.3 `.session` format on startup via `migrate_legacy_sessions()`.
+**Backward compatibility:** If legacy `.pid` session files from v1.x are detected, they are automatically migrated to the v2.x `.session` format on startup.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -670,10 +655,10 @@ Sessions persist across terminal exits and script invocations. The `status` comm
 Select a specific protocol for the session:
 
 ```bash
-socat-manager listen --port 8080 --proto tcp4    # TCP4 (default)
-socat-manager listen --port 5353 --proto udp4    # UDP4
-socat-manager listen --port 8080 --proto tcp6    # TCP6 (IPv6)
-socat-manager listen --port 5353 --proto udp6    # UDP6 (IPv6)
+./socat_manager.sh listen --port 8080 --proto tcp4    # TCP4 (default)
+./socat_manager.sh listen --port 5353 --proto udp4    # UDP4
+./socat_manager.sh listen --port 8080 --proto tcp6    # TCP6 (IPv6)
+./socat_manager.sh listen --port 5353 --proto udp6    # UDP6 (IPv6)
 ```
 
 ### Dual-Stack (`--dual-stack`)
@@ -681,7 +666,7 @@ socat-manager listen --port 5353 --proto udp6    # UDP6 (IPv6)
 Launch both TCP and UDP on the same port. Each protocol gets its own Session ID:
 
 ```bash
-socat-manager redirect --lport 8443 --rhost example.com --rport 443 --dual-stack
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443 --dual-stack
 # Output:
 #   [✓] Redirector active: tcp4:8443 → example.com:443 (SID a1b2c3d4)
 #   [✓] Redirector active: udp4:8443 → example.com:443 (SID e5f67890)
@@ -690,9 +675,9 @@ socat-manager redirect --lport 8443 --rhost example.com --rport 443 --dual-stack
 Stop operations are protocol-aware:
 
 ```bash
-socat-manager stop a1b2c3d4       # Stop only TCP (UDP remains active)
-socat-manager stop e5f67890       # Stop only UDP
-socat-manager stop --port 8443    # Stop both (all protocols on port)
+./socat_manager.sh stop a1b2c3d4       # Stop only TCP (UDP remains active)
+./socat_manager.sh stop e5f67890       # Stop only UDP
+./socat_manager.sh stop --port 8443    # Stop both (all protocols on port)
 ```
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
@@ -705,20 +690,18 @@ The `--capture` flag enables socat's `-v` (verbose) mode, which produces hex dum
 
 ```bash
 # Capture on any mode
-socat-manager listen --port 8080 --capture
-socat-manager forward --lport 8080 --rhost 10.0.0.1 --rport 80 --capture
-socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --capture
-socat-manager redirect --lport 8443 --rhost example.com --rport 443 --capture
-socat-manager batch --ports "8080,8443" --capture
+./socat_manager.sh listen --port 8080 --capture
+./socat_manager.sh forward --lport 8080 --rhost 10.0.0.1 --rport 80 --capture
+./socat_manager.sh tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --capture
+./socat_manager.sh redirect --lport 8443 --rhost example.com --rport 443 --capture
+./socat_manager.sh batch --ports "8080,8443" --capture
 ```
 
-Capture log files are written to: `logs/capture-<proto>-<port>-<timestamp>.log`
+Capture log files are written to: `logs/capture-<proto>-<port>-<host>-<rport>-<timestamp>.log`
 
 For tunnel mode, capture logs contain **decrypted** traffic between the TLS termination point and the remote target.
 
 For dual-stack with capture, each protocol gets its own capture log.
-
-All capture logs are created with 0o600 permissions (owner read/write only).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -729,21 +712,16 @@ All capture logs are created with 0o600 permissions (owner read/write only).
 The `--watchdog` flag enables automatic restart if the socat process crashes:
 
 ```bash
-socat-manager listen --port 8080 --watchdog
-socat-manager listen --port 8080 --watchdog --max-restarts 20 --backoff 5
+./socat_manager.sh listen --port 8080 --watchdog
 ```
 
-| Parameter | Default | CLI Flag | Description |
-|-----------|---------|----------|-------------|
-| Initial restart delay | 1 second | `--backoff` | Configurable initial delay |
-| Backoff pattern | Exponential | — | 1s, 2s, 4s, 8s, 16s, 32s, 60s |
-| Maximum backoff | 60 seconds | — | Capped |
-| Maximum restarts | 10 | `--max-restarts` | Configurable |
-| Graceful stop | `.stop` file | — | Watchdog checks between restarts |
-
-**Monitor-first design:** The watchdog receives the PID of the already-running socat process and monitors it via `os.kill(pid, 0)` polling. It does NOT launch its own socat — only re-launches after confirmed process death. This eliminates the duplicate-launch bug class where the watchdog would bind an already-occupied port.
-
-**Interactive menu:** When enabling watchdog in the menu, you're prompted for both max restart attempts and initial backoff delay.
+| Parameter | Value |
+|-----------|-------|
+| Initial restart delay | 1 second |
+| Backoff pattern | Exponential: 1s, 2s, 4s, 8s, 16s, 32s, 60s |
+| Maximum backoff | 60 seconds (capped) |
+| Maximum restarts | 10 (default, configurable in source) |
+| Graceful stop | Writes `.stop` signal file; watchdog checks between restarts |
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -755,18 +733,18 @@ socat-manager listen --port 8080 --watchdog --max-restarts 20 --backoff 5
 
 | Log | Path | Description |
 |-----|------|-------------|
-| Master execution | `logs/socat-manager-<timestamp>.log` | All operations for this script invocation |
-| Session-specific | `logs/session-<sid>.log` | Per-session audit trail |
+| Master execution | `logs/socat_manager-<timestamp>.log` | All operations for this script invocation |
+| Session-specific | `logs/session-<sid>-<timestamp>.log` | Per-session audit trail |
+| Session errors | `logs/session-<sid>-error.log` | Socat stderr output (non-capture mode) |
 | Listener data | `logs/listener-<proto>-<port>.log` | Raw incoming data (listen/batch modes) |
 | Traffic capture | `logs/capture-<proto>-<port>-<timestamp>.log` | Hex dump traffic (when `--capture` enabled) |
 
 ### Log Format
 
-Structured log entries include timestamp, level, correlation ID, component, and message:
+Master and session logs use structured format compliant with OWASP Logging Cheat Sheet and NIST SP 800-92:
 
 ```
-2026-03-30 14:30:00 [INFO    ] [corr:a1b2c3d4] [session] Session active: PID=12345 PGID=12345
-2026-03-30 14:30:01 [INFO    ] [corr:a1b2c3d4] [watchdog] Watchdog started for 'tcp4-8080' [a1b2c3d4] (max 10 restarts, backoff 1s)
+2026-03-20T14:30:00.123 [INFO] [corr:a1b2c3d4] [session] Session registered: name=redir-tcp4-8443 pid=12345 pgid=12345 mode=redirect proto=tcp4 port=8443
 ```
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
@@ -776,62 +754,36 @@ Structured log entries include timestamp, level, correlation ID, component, and 
 ## Directory Structure
 
 ```
-socat-manager-python/                # Repository root
-├── socat-manager.py                 # Standalone runner (no pip install needed)
-├── LICENSE                          # MIT License with supplemental sections
-├── Makefile                         # Build, test, install, package (14 targets)
-├── pyproject.toml                   # Project metadata and tool configuration
-├── .gitignore                       # Git ignore rules
-├── src/socat_manager/
-│   ├── __init__.py                  # Package version
-│   ├── __main__.py                  # Entry point, signal handlers, dispatch
-│   ├── cli.py                       # argparse with 10 subcommands
-│   ├── menu.py                      # Interactive TUI with paired forward
-│   ├── config.py                    # Constants, dataclasses, protocol maps
-│   ├── logging_setup.py             # Dual-output structured logging
-│   ├── validation.py                # 9 whitelist validators (trust boundary)
-│   ├── session.py                   # CRUD, locking, migration, bulk reader
-│   ├── commands.py                  # 4 socat command builders
-│   ├── process.py                   # Launch (setsid), 9-step stop, port checks
-│   ├── watchdog.py                  # Monitor-first auto-restart
-│   ├── certs.py                     # TLS self-signed cert generation
-│   └── modes/
-│       ├── listen.py, batch.py      # Listener modes
-│       ├── forward.py               # Bidirectional relay
-│       ├── tunnel.py                # TLS-encrypted tunnel
-│       ├── redirect.py              # Transparent redirection
-│       ├── status.py                # Session status display
-│       └── stop.py                  # Session termination
-├── tests/
-│   ├── conftest.py                  # Shared fixtures
-│   ├── unit/                        # 355 unit tests (12 files)
-│   ├── integration/                 # 155 integration tests (6 files)
-│   └── stubs/                       # Mock socat, ss, openssl binaries
-├── docs/
-│   ├── README.md                    # Documentation index
-│   ├── USAGE_GUIDE.md               # Full usage reference
-│   ├── SETUP_GUIDE.md               # Installation and configuration
-│   ├── SECURITY.md                  # STRIDE threat model, 7-layer defense
-│   ├── CONTRIBUTING.md              # Contribution guidelines
-│   ├── CHANGELOG.md                 # Version history
-│   ├── CODE_OF_CONDUCT.md           # Community standards
-│   ├── TROUBLESHOOTING.md           # Common issues and solutions
-│   ├── Frequently_Asked_Questions_(FAQ).md
-│   ├── DEVELOPMENT_GUIDE.md         # Development workflow
-│   ├── DEVELOPER_GUIDE.md           # Exhaustive code reference (2,400+ lines)
-│   └── wiki/                        # 15 standalone GitHub wiki pages
+socat-manager/                    # Repository root
+├── socat_manager.sh              # Main script (chmod +x)
+├── Makefile                      # Build, test, install, package
+├── .shellcheckrc                 # ShellCheck configuration
+├── .gitignore                    # Git ignore rules
+├── bin/
+│   └── socat-manager             # System-wide wrapper script
+├── templates/
+│   └── activate.sh              # Virtual environment activation template
+├── tests/                       # BATS test suite (220 tests)
+│   ├── helpers/test_helper.bash  # Shared setup/teardown
+│   ├── stubs/                    # Mock binaries (socat, ss, openssl)
+│   ├── fixtures/                 # Test data (session files, port configs)
+│   ├── unit/                     # Unit tests (validation, session)
+│   └── integration/              # Integration tests (lifecycle, dual-stack, capture)
 ├── .github/
-│   ├── workflows/test.yml           # CI: lint + pytest on push/PR
-│   └── workflows/release.yml        # CD: build + publish on tag
-├── conf/
-│   └── ports.conf.example           # Example batch config
-└── tasks/                           # Project tracking
-    ├── todo.md, lessons.md
-    ├── gap_analysis.md
-    └── bug_report_session8.md
+│   ├── workflows/test.yml        # CI: lint + BATS on push/PR
+│   ├── workflows/release.yml     # CD: build + publish on tag
+│   ├── ISSUE_TEMPLATE/           # Bug report, feature request, security
+│   └── PULL_REQUEST_TEMPLATE.md  # PR checklist
+├── README.md                     # This file
+├── USAGE_GUIDE.md                # Detailed usage and deployment guide
+├── CONTRIBUTING.md               # Development setup and contribution guide
+├── CHANGELOG.md                  # Version history and change details
+├── SECURITY.md                   # Security policy and threat model
+├── CODE_OF_CONDUCT.md            # Contributor code of conduct
+└── LICENSE                       # MIT License
 ```
 
-Runtime directories (`sessions/`, `logs/`, `certs/`) are created automatically on first run and excluded from version control by `.gitignore`.
+Runtime directories (`sessions/`, `logs/`, `certs/`, `conf/`) are created automatically on first run and excluded from version control by `.gitignore`.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -843,21 +795,18 @@ Runtime directories (`sessions/`, `logs/`, `certs/`) are created automatically o
 
 - All ports validated as integers in range 1-65535
 - All hostnames validated against IPv4, IPv6, and RFC 1123 patterns
-- Shell metacharacters blocked in hostnames, file paths, and socat options
+- Shell metacharacters (`; | & $ \` ( ) { } [ ] < > ! #`) blocked in hostnames
+- Path traversal (`..`) and injection characters blocked in file paths
 - Session IDs validated as exactly 8 lowercase hex characters
-- Protocol strings validated against exact whitelist
-- File paths validated for existence, readability, and absence of injection characters
-- Socat options validated against character whitelist `[a-zA-Z0-9=,.:/_-]`
+- Protocol strings validated against whitelist (tcp4, tcp6, udp4, udp6)
 
 ### Process Isolation
 
-- Each socat process runs in its own process group (`os.setsid()`)
-- Session files have restricted permissions (0o600)
-- Session directory has restricted permissions (0o700)
-- Private key files created with 0o600 permissions
-- Capture logs created with 0o600 permissions
-- Port-based fallback kill only targets processes with comm name `socat` (verified via `/proc/{pid}/comm`)
-- `subprocess.Popen` with argument lists only — `shell=True` never used
+- Each socat process runs in its own process group (`setsid`)
+- Session files have restricted permissions (600)
+- Session directory has restricted permissions (700)
+- Private key files generated with 600 permissions
+- Port-based fallback kill only targets processes with comm name `socat` (verified via `ps`)
 
 ### What This Tool Does NOT Do
 
@@ -867,7 +816,7 @@ Runtime directories (`sessions/`, `logs/`, `certs/`) are created automatically o
 - Does not filter or inspect traffic content (capture is passive hex dump)
 - Self-signed certificates (tunnel mode default) are not trusted by clients unless explicitly configured
 
-For the full STRIDE threat model, 7-layer defense analysis, attack surface analysis, and secure deployment guidelines, see [SECURITY.md](docs/SECURITY.md).
+For the full security policy, threat model, implemented controls, known limitations, and secure deployment guidelines, see [SECURITY.md](SECURITY.md).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -877,18 +826,18 @@ For the full STRIDE threat model, 7-layer defense analysis, attack surface analy
 
 ### Session appears DEAD in status but port is still bound
 
-The original process may have been killed without going through `socat-manager stop`. Run:
+The original process may have been killed without going through `socat_manager.sh stop`. Run:
 
 ```bash
-socat-manager status --cleanup    # Remove stale session files
-socat-manager status -v           # Show debug output
+./socat_manager.sh status --cleanup    # Remove stale session files
+./socat_manager.sh status --verbose    # Show system-level socat listeners via ss
 ```
 
 Then manually kill any orphaned socat processes:
 
 ```bash
-ss -tlnp | grep :8443            # Find PID
-kill <PID>                        # Or: kill -9 <PID>
+ss -tlnp | grep :8443                  # Find PID
+kill <PID>                              # Or: kill -9 <PID>
 ```
 
 ### "Port already in use" when launching
@@ -896,26 +845,30 @@ kill <PID>                        # Or: kill -9 <PID>
 Another process is bound to the port. Check with:
 
 ```bash
-ss -tlnp | grep :<PORT>          # TCP
-ss -ulnp | grep :<PORT>          # UDP
+ss -tlnp | grep :<PORT>               # TCP
+ss -ulnp | grep :<PORT>               # UDP
 ```
 
 ### Watchdog keeps restarting
 
-Check the session log for the root cause:
+The socat process is crashing immediately. Check the session error log:
 
 ```bash
-socat-manager status <SID>        # Shows associated log files
-cat logs/session-<SID>.log        # Check for errors
+cat logs/session-<SID>-error.log
 ```
 
-Common causes: invalid remote host (DNS failure), connection refused, certificate errors (tunnel mode).
+Common causes: invalid remote host (DNS resolution failure), connection refused on remote port, certificate errors (tunnel mode).
 
 ### Stop falls through to SIGKILL
 
-If SIGTERM doesn't work within the grace period (5 seconds), socat may have child processes not responding. This is expected behavior — SIGKILL is the fallback.
+If SIGTERM doesn't work within the grace period (5 seconds), socat may have child processes that aren't responding to SIGTERM. This is expected behavior — SIGKILL is the fallback. Check:
 
-For additional troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+```bash
+./socat_manager.sh status <SID>        # Verify it's actually stopped
+ss -tlnp | grep :<PORT>               # Verify port is freed
+```
+
+For additional troubleshooting scenarios, see the [Usage Guide](USAGE_GUIDE.md#11-troubleshooting).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -923,48 +876,39 @@ For additional troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTI
 
 ## Testing
 
-The project includes a full test suite with 510 tests covering validation, session management, lifecycle operations, protocol-scoped stop, traffic capture, watchdog behavior, CLI parsing, and mode handler execution.
+The project includes a comprehensive test suite built on [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) with 220 tests covering validation, session management, lifecycle operations, protocol-scoped stop, and traffic capture.
 
 ```bash
 # Run the full test suite (lint + all tests)
 make test
 
-# Run unit tests only (fast, ~3 seconds)
+# Run unit tests only (fast, ~2 seconds)
 make test-unit
 
-# Run integration tests only
+# Run integration tests only (uses mock socat/ss stubs)
 make test-integration
 
-# Run tests with coverage report
-make test-coverage
-
-# Run ruff linting only
+# Run ShellCheck linting only
 make lint
 
-# Quick smoke test (import, help, version)
-make test-smoke
+# Run a specific test file
+bats tests/unit/validation.bats
+
+# Run a specific test by name
+bats tests/integration/dual_stack.bats --filter "stopping TCP preserves UDP"
 ```
 
 | Test File | Tests | Coverage |
-|-----------|-------|---------|
-| `tests/unit/test_validation.py` | 70 | All 9 `validate_*` functions, injection attempts, edge cases |
-| `tests/unit/test_session.py` | 49 | CRUD, exact-key matching, bulk reader, migration, cleanup |
-| `tests/unit/test_config.py` | 44 | Constants, frozen dataclasses, protocol maps |
-| `tests/unit/test_cli.py` | 43 | All 10 subcommands, flags, defaults, help/version |
-| `tests/unit/test_commands.py` | 28 | All 4 command builders, protocol variants, capture |
-| `tests/unit/test_logging.py` | 28 | Formatter, display helpers, session logging |
-| `tests/unit/test_main.py` | 24 | Dispatch routing, signal handlers, check_socat |
-| `tests/unit/test_process.py` | 15 | kill_by_port, _is_socat_process, check_port_freed |
-| `tests/unit/test_watchdog.py` | 10 | Backoff, stop signal, max restarts, monitor-first |
-| `tests/unit/test_certs.py` | 8 | OpenSSL subprocess, error handling |
-| `tests/integration/test_menu.py` | 57 | Cancel detection, prompt validation, submenus |
-| `tests/integration/test_mode_handlers.py` | 29 | All 5 mode handlers end-to-end |
-| `tests/integration/test_lifecycle.py` | 22 | Launch→find→stop, max sessions, dual-stack |
-| `tests/integration/test_modes.py` | 19 | mode_status, mode_stop with all selectors |
-| `tests/integration/test_capture.py` | 15 | -v flag propagation, log permissions |
-| `tests/integration/test_dual_stack.py` | 14 | Protocol independence, symmetric stop |
+|-----------|-------|----------|
+| `tests/unit/validation.bats` | 68 | All `validate_*` functions, `generate_session_id`, `get_alt_protocol` |
+| `tests/unit/session.bats` | 30 | `session_register`, `session_read_field`, `session_find_by_*`, `session_cleanup_dead` |
+| `tests/integration/lifecycle.bats` | 23 | Launch, PID-file handoff, stop, non-blocking, multi-session, command builders |
+| `tests/integration/dual_stack.bats` | 8 | Protocol-scoped stop, dual-stack launch, port isolation |
+| `tests/integration/capture.bats` | 14 | Capture flag in all builders, stderr redirect, dual-stack capture isolation |
 
-Tests use mock stubs for socat, ss, and openssl so they run without real network operations or dependencies. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details on writing and running tests.
+Tests use mock stubs for socat, ss, and openssl so they run without real network operations or dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on writing and running tests.
+
+**CI/CD**: Every push and PR runs the test suite automatically via [GitHub Actions](.github/workflows/test.yml) across a matrix of bash versions (4.4, 5.1, 5.2) and Ubuntu releases (22.04, 24.04). Releases are automated via [tag-triggered workflow](.github/workflows/release.yml).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -976,22 +920,22 @@ Contributions are welcome and appreciated. To contribute:
 
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feature/your-feature-name`)
-3. **Commit** your changes with clear, descriptive messages
+3. **Commit** your changes with clear, descriptive messages (`git commit -m 'Add: description of change'`)
 4. **Push** to your branch (`git push origin feature/your-feature-name`)
-5. **Open** a Pull Request with a detailed description
+5. **Open** a Pull Request with a detailed description of the change, its motivation, and testing performed
 
 ### Guidelines
 
-- Run `make test` before submitting — all 510 tests must pass
-- Run `make lint` — ruff must report no errors
-- Follow the existing code style: type hints, Google-style docstrings, thorough comments
+- Run `make test` before submitting — all 220 tests must pass
+- Run `make lint` — ShellCheck must report no warnings
+- Follow the existing code style: comprehensive function documentation headers (Description, Parameters, Returns), inline comments explaining non-obvious logic, and consistent formatting
 - All user-supplied inputs must pass through the existing validation functions
-- No `eval()`, `exec()`, or `shell=True` under any circumstances
-- Update `docs/CHANGELOG.md` with your changes
-- Read and follow the [Code of Conduct](docs/CODE_OF_CONDUCT.md)
-- Report security vulnerabilities privately per [SECURITY.md](docs/SECURITY.md)
+- New CLI flags must be added to the mode argument parser, command builder, help function, and at least one BATS test
+- Update `CHANGELOG.md` with your changes under an `[Unreleased]` section
+- Read and follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+- Report security vulnerabilities privately per [SECURITY.md](SECURITY.md) — do not open public issues for security bugs
 
-For the complete development guide including environment setup, test architecture, and PR process, see [CONTRIBUTING.md](docs/CONTRIBUTING.md).
+For the complete development guide including environment setup, test architecture, coding standards, and PR process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -1002,16 +946,12 @@ For the complete development guide including environment setup, test architectur
 | Document | Description |
 |----------|-------------|
 | [README.md](README.md) | Project overview, features, architecture, and quick reference (this file) |
-| [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md) | Complete usage for all modes with flag tables and behavioral details |
-| [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md) | Installation methods, dependency installation, environment configuration |
-| [docs/SECURITY.md](docs/SECURITY.md) | STRIDE threat model, 7-layer defense analysis, attack surface, secure coding |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Development setup, coding standards, PR process, review checklist |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Complete version history with detailed change descriptions |
-| [docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md) | Contributor Covenant with responsible use policy |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 12 common issues with causes, diagnostics, and solutions |
-| [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Exhaustive API reference for every module, function, class, and constant |
-| [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) | Development workflow, test organization, CI pipeline, release process |
-| [docs/wiki/](docs/wiki/) | 15 standalone GitHub wiki pages with Mermaid diagrams and operational scenarios |
+| [USAGE_GUIDE.md](USAGE_GUIDE.md) | Detailed usage, installation methods (direct, make install, venv), testing guide, operational scenarios, and troubleshooting |
+| [CHANGELOG.md](CHANGELOG.md) | Complete version history with detailed change descriptions per release |
+| [SECURITY.md](SECURITY.md) | Security policy, vulnerability reporting, threat model, implemented controls, and secure deployment guidelines |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development environment setup, testing guide, coding standards, and PR process |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant code of conduct with responsible use policy for security tooling |
+| [LICENSE](LICENSE) | MIT License with liability disclaimer and dependency notices |
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -1021,9 +961,13 @@ For the complete development guide including environment setup, test architectur
 
 | Version | Date | Changes |
 |---------|------|---------|
-| **0.1.0** | 2026-03-30 | Initial Python release. Full parity with bash v2.3.0. 510 tests. Watchdog rewrite (monitor-first). Configurable --max-restarts/--backoff. Paired forward. Interactive menu with socat-opts examples. |
+| **2.3.0** | 2026-03-20 | `--capture` extended to all operational modes. `--proto` added to tunnel mode (TLS-aware validation). |
+| **2.2.0** | 2026-03-20 | Protocol-aware stop: stopping TCP no longer kills UDP on shared ports. `--proto` added to redirect mode. Full documentation restoration. |
+| **2.1.0** | 2026-03-20 | Fixed terminal blocking (PID-file handoff). Fixed wrong PID tracking. Added `--dual-stack` to all modes. |
+| **2.0.0** | 2026-03-20 | Session ID system (8-char hex). PGID tracking via `setsid`. Comprehensive stop sequence with port verification. |
+| **1.0.0** | 2026-03-20 | Initial release. Six operational modes. PID-file tracking. Basic stop/status. |
 
-See [CHANGELOG.md](docs/CHANGELOG.md) for complete details on every change.
+See [CHANGELOG.md](CHANGELOG.md) for complete details on every change.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -1031,13 +975,13 @@ See [CHANGELOG.md](docs/CHANGELOG.md) for complete details on every change.
 
 ## Acknowledgments
 
-- **[socat](http://www.dest-unreach.org/socat/)** by Gerhard Rieger — the multipurpose relay utility that this manager wraps
+- **[socat](http://www.dest-unreach.org/socat/)** by Gerhard Rieger — the powerful relay utility that this manager wraps
 - **[OpenSSL](https://www.openssl.org/)** — TLS/SSL implementation used for tunnel mode certificate generation
-- **[socat_manager.sh](https://github.com/Sandler73/Socat-Network-Operations-Manager)** — the bash reference implementation (v2.3.0) that this Python variant reimplements
 - **[Contributor Covenant](https://www.contributor-covenant.org/)** — code of conduct framework
 - **[Keep a Changelog](https://keepachangelog.com/)** — changelog format standard
 - **[Semantic Versioning](https://semver.org/)** — versioning scheme
-- **OWASP** and **NIST** — security standards referenced (CWE-20, CWE-78, NIST SP 800-92)
+- **[Shields.io](https://shields.io/)** — badge generation service
+- **OWASP** and **NIST** — security standards referenced throughout (OWASP Logging Cheat Sheet, NIST SP 800-92, CWE-20, CWE-22, CWE-78)
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -1045,12 +989,38 @@ See [CHANGELOG.md](docs/CHANGELOG.md) for complete details on every change.
 
 ## License
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for full terms including warranty disclaimer, liability limitation, authorized use notice, data handling notice, and cryptographic notice.
+Distributed under the MIT License. See [LICENSE](LICENSE) for full terms.
 
 ```
-MIT License · Copyright (c) 2026 Socat Network Operations Manager Contributors
+MIT License · Copyright (c) 2026 Sandler73 Contributors
 ```
 
-This software is intended for authorized network operations, security testing, research, and educational purposes only. Users are solely responsible for to confirm that their use complies with all applicable laws and regulations.
+This software is intended for authorized network operations, security testing, research, and educational purposes only. Users are solely responsible for ensuring their use complies with all applicable laws and regulations.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
+---
+
+## Support
+
+<p align="center">
+  ⭐ If this project helps you operationally, please consider giving it a star! ⭐
+</p>
+
+<p align="center">
+  <a href="https://github.com/Sandler73/Socat-Network-Operations-Manager/issues/new?template=bug_report.md">Report Bug</a>
+  ·
+  <a href="https://github.com/Sandler73/Socat-Network-Operations-Manager/issues/new?template=feature_request.md">Request Feature</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/sponsors/Sandler73">
+    <img src="https://img.shields.io/badge/Sponsor-❤️-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor">
+  </a>
+  <a href="https://ko-fi.com/Sandler73">
+    <img src="https://img.shields.io/badge/Ko--fi-Buy%20Me%20a%20Coffee-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi">
+  </a>
+</p>
+
+<p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
