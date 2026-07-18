@@ -1,6 +1,6 @@
-# socat_manager.sh — Usage Guide
+# socat_manager.sh - Usage Guide
 
-**Version 2.3.0**
+**Version 2.5.1**
 
 This guide provides complete instructions for installing, configuring, and executing `socat_manager.sh` across three deployment models: direct script execution, system-wide command/utility installation, and isolated virtual environment setup. It covers all operational modes, protocol configurations, and traffic capture capabilities with step-by-step examples.
 
@@ -17,13 +17,13 @@ This guide provides complete instructions for installing, configuring, and execu
   - [2.2 System Command/Utility Installation](#22-system-commandutility-installation)
   - [2.3 Isolated Virtual Environment (venv) Setup](#23-isolated-virtual-environment-venv-setup)
 - [3. Mode Reference](#3-mode-reference)
-  - [3.1 listen — Single Port Listener](#31-listen--single-port-listener)
-  - [3.2 batch — Multi-Port Listeners](#32-batch--multi-port-listeners)
-  - [3.3 forward — Port Forwarding](#33-forward--port-forwarding)
-  - [3.4 tunnel — Encrypted TLS Tunnel](#34-tunnel--encrypted-tls-tunnel)
-  - [3.5 redirect — Traffic Redirection](#35-redirect--traffic-redirection)
-  - [3.6 status — Session Status](#36-status--session-status)
-  - [3.7 stop — Session Shutdown](#37-stop--session-shutdown)
+  - [3.1 listen - Single Port Listener](#31-listen--single-port-listener)
+  - [3.2 batch - Multi-Port Listeners](#32-batch--multi-port-listeners)
+  - [3.3 forward - Port Forwarding](#33-forward--port-forwarding)
+  - [3.4 tunnel - Encrypted TLS Tunnel](#34-tunnel--encrypted-tls-tunnel)
+  - [3.5 redirect - Traffic Redirection](#35-redirect--traffic-redirection)
+  - [3.6 status - Session Status](#36-status--session-status)
+  - [3.7 stop - Session Shutdown](#37-stop--session-shutdown)
 - [4. Protocol Configuration](#4-protocol-configuration)
   - [4.1 Individual Protocol Selection (--proto)](#41-individual-protocol-selection---proto)
   - [4.2 Dual-Stack Operation (--dual-stack)](#42-dual-stack-operation---dual-stack)
@@ -143,7 +143,7 @@ chmod +x socat_manager.sh
 ```bash
 # Check version
 ./socat_manager.sh --version
-# socat_manager.sh v2.3.0
+# socat_manager.sh v2.4.9
 
 # Check help
 ./socat_manager.sh --help
@@ -255,7 +255,7 @@ make lint             # Run ShellCheck on all bash files (script, bin, stubs, he
 make test             # Run full test suite (lint + BATS)
 make test-unit        # Run unit tests only (fast)
 make test-integration # Run integration tests only
-make test-smoke       # Quick smoke test (menu, help, version, status — no BATS)
+make test-smoke       # Quick smoke test (menu, help, version, status - no BATS)
 make install          # Install system-wide
 make uninstall        # Remove installation
 make verify           # Post-install verification (includes menu check)
@@ -282,7 +282,7 @@ which socat-manager
 # /usr/local/bin/socat-manager
 
 socat-manager --version
-# socat_manager.sh v2.3.0
+# socat_manager.sh v2.4.9
 
 # 4. Use from anywhere
 socat-manager listen --port 8080
@@ -611,7 +611,7 @@ CLI mode remains fully functional. All commands documented below work unchanged.
 
 ## 3. Mode Reference
 
-### 3.1 listen — Single Port Listener
+### 3.1 listen - Single Port Listener
 
 Starts a unidirectional listener that captures incoming data to a log file. Forks per connection for concurrent client handling.
 
@@ -642,7 +642,7 @@ socat-manager listen --port 8080 --proto tcp6 --watchdog
 **Data capture file:** `logs/listener-<proto>-<port>.log`
 **Traffic capture file** (with `--capture`): `logs/capture-<proto>-<port>-<timestamp>.log`
 
-### 3.2 batch — Multi-Port Listeners
+### 3.2 batch - Multi-Port Listeners
 
 Launches listeners on multiple ports simultaneously. Each port gets its own Session ID.
 
@@ -680,7 +680,7 @@ socat-manager batch --config conf/ports.conf --watchdog --capture
 # 9999  ← commented out, skipped
 ```
 
-### 3.3 forward — Port Forwarding
+### 3.3 forward - Port Forwarding
 
 Creates a bidirectional port forwarder (full proxy) between a local port and a remote target.
 
@@ -709,7 +709,7 @@ socat-manager forward --lport 8080 --rhost 10.0.0.5 --rport 53 --proto tcp4 --re
 socat-manager forward --lport 8080 --rhost 192.168.1.10 --rport 80 --dual-stack --capture
 ```
 
-### 3.4 tunnel — Encrypted TLS Tunnel
+### 3.4 tunnel - Encrypted TLS Tunnel
 
 Accepts TLS/SSL connections and forwards plaintext traffic to a remote target. Auto-generates self-signed certificates if not provided.
 
@@ -744,7 +744,7 @@ socat-manager tunnel --port 4443 --rhost 10.0.0.5 --rport 22 --dual-stack --capt
 socat - OPENSSL:localhost:4443,verify=0
 ```
 
-### 3.5 redirect — Traffic Redirection
+### 3.5 redirect - Traffic Redirection
 
 Bidirectional transparent proxy between a local port and a remote target with optional traffic capture.
 
@@ -769,7 +769,7 @@ socat-manager redirect --lport 5353 --rhost 8.8.8.8 --rport 53 --proto udp4
 socat-manager redirect --lport 8443 --rhost example.com --rport 443 --dual-stack --capture
 ```
 
-### 3.6 status — Session Status
+### 3.6 status - Session Status
 
 Display all active sessions or detailed information for a specific session.
 
@@ -802,7 +802,7 @@ socat-manager status --verbose
 socat-manager status --cleanup
 ```
 
-### 3.7 stop — Session Shutdown
+### 3.7 stop - Session Shutdown
 
 Stop one or more sessions. Protocol-aware: stopping TCP does not affect UDP on the same port.
 
@@ -1206,12 +1206,12 @@ EOF
 Install the testing tools:
 
 ```bash
-# BATS (Bash Automated Testing System) — install from source for latest version
+# BATS (Bash Automated Testing System) - install from source for latest version
 git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
 sudo /tmp/bats-core/install.sh /usr/local
 bats --version
 
-# ShellCheck — static analysis for bash
+# ShellCheck - static analysis for bash
 sudo apt-get install -y shellcheck
 
 # Verify all dependencies at once
@@ -1225,7 +1225,7 @@ make test
 ```
 
 This runs three stages in order: ShellCheck linting, unit tests, then
-integration tests. All 220 tests must pass. Output looks like:
+integration tests. All 306 tests must pass. Output looks like:
 
 ```
   Running ShellCheck...
@@ -1279,10 +1279,10 @@ bats --recursive tests/ --filter "validate_port"
 
 Tests use mock stubs instead of real socat, ss, and openssl. This means:
 
-- **No network operations** — no ports are actually bound or traffic forwarded
-- **No root required** — tests run entirely in user space
-- **No external dependencies** — socat doesn't need to be installed to run tests
-- **Full isolation** — each test gets its own temp directory; no test affects another
+- **No network operations** - no ports are actually bound or traffic forwarded
+- **No root required** - tests run entirely in user space
+- **No external dependencies** - socat doesn't need to be installed to run tests
+- **Full isolation** - each test gets its own temp directory; no test affects another
 
 The mock socat stub logs its arguments (so tests verify correct command
 construction) and sleeps (so tests have a real PID to track and stop).
@@ -1341,7 +1341,7 @@ kill <PID>
 
 ### Terminal blocked / script hangs
 
-If using an older version (pre-2.1), upgrade to v2.3.0 which uses the PID-file handoff pattern. This was a bug in v2.0.0 caused by stdout file descriptor inheritance in `$()` subshells.
+If using an older version (pre-2.1), upgrade to the latest version, which uses the PID-file handoff pattern. The original problem was caused by stdout file descriptor inheritance in `$()` subshells.
 
 ### Stop falls through to SIGKILL
 
@@ -1363,7 +1363,7 @@ socat-manager status <SID>
 
 ### Dual-stack: stopping TCP kills UDP
 
-Upgrade to v2.2.0+. This was a bug in v2.1.0 where `_stop_session` checked both protocols and `_kill_by_port` killed all socat processes on the port regardless of protocol. v2.2.0+ scopes all port checks and kills to the session's own protocol.
+Upgrade to the latest version. Earlier versions checked both protocols in `_stop_session` and `_kill_by_port` killed all socat processes on the port regardless of protocol; current versions scope all port checks and kills to the session's own protocol.
 
 ### Permission denied on privileged ports
 
