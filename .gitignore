@@ -25,16 +25,17 @@ logs/
 logs/*.log
 
 # Auto-generated TLS certificates and private keys (tunnel mode)
-# CRITICAL: Private keys must NEVER be committed to version control
-certs/
-certs/*.pem
-certs/*.key
-certs/*.crt
+# CRITICAL: Private keys must NEVER be committed to version control.
+# Ignore the directory contents but keep the committed example/docs.
+certs/*
+!certs/README.md
+!certs/example-tunnel.pem.sample
 
-# Configuration directory (may contain deployment-specific port configs)
-# NOTE: Template configs (e.g., ports.conf.example) SHOULD be committed.
-#       Remove this entry if you want to track actual config files.
-conf/
+# Configuration directory (may contain deployment-specific port configs).
+# Ignore runtime configs but keep the committed example and docs.
+conf/*
+!conf/README.md
+!conf/example-ports.conf
 
 # -----------------------------------------------------------------------------
 # OS and editor artifacts
@@ -160,7 +161,8 @@ dist/
 # Private keys and credentials (redundant with certs/ above, belt-and-suspenders)
 *.key
 *.pem
-!certs/  # Already ignored above, but explicit for clarity
+# Keep the committed example certificate sample (public cert only, no key).
+!certs/example-tunnel.pem.sample
 *.p12
 *.pfx
 id_rsa
