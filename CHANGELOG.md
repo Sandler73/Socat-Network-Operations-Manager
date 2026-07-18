@@ -584,17 +584,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version Comparison
 
-| Capability | v1.0.0 | v2.0.0 | v2.1.0 | v2.2.0 | v2.3.0 |
-|------------|--------|--------|--------|--------|--------|
-| Session tracking | .pid files by name | .session files by SID | .session + PID-file handoff | .session + protocol field | .session + protocol field |
-| Process isolation | Background `&` | setsid + disown | setsid + exec + PID-file | setsid + exec + PID-file | setsid + exec + PID-file |
-| Stop reliability | pgrep by script PID | PGID-based tree kill | Correct PID/PGID via pidfile | Protocol-scoped stop | Protocol-scoped stop |
-| Terminal blocking | Yes (hangs) | Yes (hangs) | Fixed (non-blocking) | Fixed | Fixed |
-| Dual-stack | batch only | batch only | All modes | All modes | All modes |
-| --proto on redirect | No (hardcoded TCP4) | No (hardcoded TCP4) | No (hardcoded TCP4) | Yes | Yes |
-| --proto on tunnel | No | No | No | No | Yes (TCP-aware validation) |
-| --capture | redirect only | redirect only | redirect only | redirect only | All modes |
-| Protocol-aware stop | No | No | No | Yes | Yes |
-| Cross-protocol kill bug | N/A | N/A | Present | Fixed | Fixed |
-| Session detail view | No | Yes | Yes | Yes (protocol-scoped) | Yes |
-| Documentation density | Full | Full | Reduced (bug) | Restored | Full |
+| Capability | v1.0 | v2.0 | v2.1 | v2.2 | v2.3 | v2.4 | v2.5 |
+|------------|------|------|------|------|------|------|------|
+| Session tracking | .pid by name | .session by SID | .session + PID-file handoff | .session + protocol field | .session + protocol field | .session + protocol field | .session + protocol field |
+| Process isolation | Background `&` | setsid + disown | setsid + exec + PID-file | setsid + exec + PID-file | setsid + argv exec + PID-file | setsid + argv exec + PID-file | setsid + argv exec + PID-file |
+| Stop reliability | pgrep by script PID | PGID tree kill | Correct PID/PGID via pidfile | Protocol-scoped stop | Protocol-scoped stop | Protocol-scoped + exact-port kill | Protocol-scoped + exact-port kill |
+| Terminal blocking | Yes (hangs) | Yes (hangs) | Fixed (non-blocking) | Fixed | Fixed | Fixed | Fixed |
+| Dual-stack | batch only | batch only | All modes | All modes | All modes | All modes | All modes |
+| `--proto` on redirect | No (TCP4 only) | No | No | Yes | Yes | Yes | Yes |
+| `--proto` on tunnel | No | No | No | No | Yes (TCP-aware) | Yes | Yes |
+| `--capture` | redirect only | redirect only | redirect only | redirect only | All modes | All modes (readable `-v -x`) | All modes (readable `-v -x`) |
+| Protocol-aware stop | No | No | No | Yes | Yes | Yes | Yes |
+| Cross-protocol kill bug | N/A | N/A | Present | Fixed | Fixed | Fixed | Fixed |
+| Session detail view | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| Argv-based launch (no shell re-parse) | No | No | No | No | Yes (S-01) | Yes | Yes |
+| `--socat-opts` keyword allowlist | No | No | No | No | Yes (S-02) | Yes | Yes |
+| Source access control (`--allow`/`--tcpwrap`) | No | No | No | No | No | Yes (S-03) | Yes |
+| TLS cert key-type (RSA/EC) + SAN/CN | No | No | No | No | No | Yes (S-04) | Yes |
+| Exact-port kill on stop | No | No | No | No | No | Yes (S-05) | Yes |
+| Data-dir override (`SOCAT_MANAGER_BASE`) | No | No | No | No | No | Yes (P-05) | Yes |
+| Audit store (SQLite) + `audit` command | No | No | No | No | No | Yes (P-04) | Yes |
+| Log format (text/JSON) | No | No | No | No | No | Yes (P-06) | Yes |
+| Log-level threshold | No | No | No | No | No | Yes | Yes |
+| Modular `lib/` build (18 modules) | No | No | No | No | No | Yes (A-01) | Yes |
+| Interactive menu | No | No | No | No | No | No | Yes |
+| BATS test suite | No | No | No | No | Yes | Yes | Yes (319 tests) |
+| CI matrix (Ubuntu + 5 distros, per-file runner) | No | No | No | No | No | Yes | Yes |
+| Documentation density | Full | Full | Reduced (bug) | Restored | Full | Full | Full |
+
+Columns show the cumulative capability at the end of each release line (for example v2.3 = state through v2.3.9). Audit finding IDs (S-, P-, A-) mark the release that introduced the capability; see the per-version entries above.
