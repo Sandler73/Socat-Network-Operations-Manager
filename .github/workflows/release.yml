@@ -85,7 +85,9 @@ jobs:
         run: chmod +x tests/stubs/*
 
       - name: Run all BATS tests
-        run: bats --recursive tests/
+        run: |
+          bash tests/run-suite.sh tests/unit
+          bash tests/run-suite.sh tests/integration
 
   # ===================================================================
   # JOB: release
