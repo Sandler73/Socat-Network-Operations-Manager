@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#======================================================================
+# STUB       : tests/stubs/sqlite3
+#======================================================================
+# Synopsis   : Mock sqlite3 CLI for BATS testing of the audit store.
+#
+# Description: Replaces the real sqlite3 in PATH during tests. The audit
+#              store calls sqlite3 to create the schema, insert events,
+#              prune, and run SELECT queries. This stub:
+#
+#              1. Logs every invocation (database path and SQL) to a log
+#                 file for test verification.
+#              2. Returns a mock version string for `sqlite3 --version`.
+#              3. For SELECT statements, echoes canned rows so the audit
+#                 view command has output to format. Rows can be overridden
+#                 with the SQLITE_STUB_ROWS environment variable (records
+#                 separated by newlines, fields by the active separator).
+#              4. For all other statements (CREATE, INSERT, DELETE, PRAGMA)
+#                 it simply exits successfully.
+#
+# Environment:
+#   TEST_TMPDIR       - Temp directory for this test (set by test_helper)
+#   SQLITE_STUB_ROWS  - Optional canned SELECT output (fields use separator)
+#
+# Notes      : - This file must be executable (chmod +x)
+#              - Recognises an optional leading `-separator <SEP>` flag
+#
+# Version    : 2.4.5
+#======================================================================
+
+STUB_LOG="${TEST_TMPDIR:-.}/.sqlite3_stub.log"
+
+if [[ "${1:-}" == "--version" ]]; then
+    echo "3.40.0 2026-01-01 00:00:00 stub"
+    exit 0
+fi
+
+sep="|"
+if [[ "${1:-}" == "-separator" ]]; then
+    sep="${2}"
+    shift 2
+fi
+
+db="${1:-}"
+sql="${2:-}"
+
+echo "[$(date '+%Y-%m-%dT%H:%M:%S')] DB=${db} SQL=${sql}" >> "${STUB_LOG}" 2>/dev/null || true
+
+shopt -s nocasematch
+if [[ "${sql}" =~ ^[[:space:]]*SELECT ]]; then
+    if [[ -n "${SQLITE_STUB_ROWS:-}" ]]; then
+        printf '%s\n' "${SQLITE_STUB_ROWS}"
+    else
+        printf '2026-07-15T12:00:00Z%slaunch%sa1b2c3d4%stestname%ssingle-shot launch\n' \
+            "${sep}" "${sep}" "${sep}" "${sep}"
+    fi
+fi
+
+exit 0
