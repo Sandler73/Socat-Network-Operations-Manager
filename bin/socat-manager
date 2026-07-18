@@ -28,7 +28,7 @@
 #              match the configured PREFIX.
 #
 # Notes      : - Uses exec (not a subshell) so the socat_manager.sh
-#                process replaces this wrapper — no extra PID
+#                process replaces this wrapper - no extra PID
 #              - Exit codes from socat_manager.sh pass through directly
 #              - Signals (SIGTERM, SIGINT) reach socat_manager.sh directly
 #              - Compatible with sudo: `sudo socat-manager listen --port 443`
