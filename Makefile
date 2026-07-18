@@ -63,7 +63,7 @@ SHELLCHECK  := shellcheck
 # =====================================================================
 
 .PHONY: help check-deps lint test test-unit test-integration test-smoke \
-        install uninstall verify venv dist clean _check-socat
+        install uninstall verify venv dist clean _check-socat build verify-build
 
 .DEFAULT_GOAL := help
 
@@ -162,7 +162,7 @@ check-deps: ## Verify all required and optional dependencies
 lint: ## Run ShellCheck on all bash files (script, bin, stubs, helpers)
 	@echo ""
 	@if ! command -v $(SHELLCHECK) >/dev/null 2>&1; then \
-		echo "  ⚠ ShellCheck not found — skipping lint"; \
+		echo "  ⚠ ShellCheck not found - skipping lint"; \
 		echo "  Install: sudo apt-get install -y shellcheck"; \
 		echo ""; \
 		exit 0; \
@@ -191,10 +191,26 @@ lint: ## Run ShellCheck on all bash files (script, bin, stubs, helpers)
 	@echo ""
 
 # =====================================================================
+# BUILD (single-file assembly from lib/ modules)
+# =====================================================================
+
+build: ## Assemble socat_manager.sh from the lib/*.sh module sources
+	@echo ""
+	@echo "  Building $(SCRIPT) from lib/ modules..."
+	@bash scripts/build-dist.sh
+	@echo ""
+
+verify-build: ## Check that socat_manager.sh matches the lib/ sources
+	@echo ""
+	@echo "  Verifying $(SCRIPT) is up to date with lib/..."
+	@bash scripts/build-dist.sh --check
+	@echo ""
+
+# =====================================================================
 # TESTING
 # =====================================================================
 
-test: lint test-unit test-integration ## Run full test suite (lint + all BATS tests)
+test: verify-build lint test-unit test-integration ## Run full test suite (build check + lint + all BATS tests)
 	@echo ""
 	@echo "  ════════════════════════════════════════"
 	@echo "  ✓ All tests passed"
@@ -213,7 +229,7 @@ test-integration: ## Run integration tests only (lifecycle, dual-stack, capture)
 	@$(BATS) tests/integration/
 	@echo ""
 
-test-smoke: ## Quick smoke test (menu launch, help, version, status — no BATS needed)
+test-smoke: ## Quick smoke test (menu launch, help, version, status - no BATS needed)
 	@echo ""
 	@echo "  Running smoke tests..."
 	@echo "  ──────────────────────"
@@ -457,6 +473,18 @@ dist: ## Build release tarballs and SHA256 checksums
 		cp -r tests /tmp/$(DIST_NAME)/tests; \
 		chmod +x /tmp/$(DIST_NAME)/tests/stubs/* 2>/dev/null || true; \
 	fi
+	@# Include module sources and the build script (single-file is generated)
+	@if [ -d lib ]; then cp -r lib /tmp/$(DIST_NAME)/lib; fi
+	@if [ -d scripts ]; then \
+		cp -r scripts /tmp/$(DIST_NAME)/scripts; \
+		chmod +x /tmp/$(DIST_NAME)/scripts/* 2>/dev/null || true; \
+	fi
+	@# Include conf/ and certs/ example files (README + samples), never runtime data
+	@mkdir -p /tmp/$(DIST_NAME)/conf /tmp/$(DIST_NAME)/certs
+	@test -f conf/README.md && cp conf/README.md /tmp/$(DIST_NAME)/conf/ || true
+	@test -f conf/example-ports.conf && cp conf/example-ports.conf /tmp/$(DIST_NAME)/conf/ || true
+	@test -f certs/README.md && cp certs/README.md /tmp/$(DIST_NAME)/certs/ || true
+	@test -f certs/example-tunnel.pem.sample && cp certs/example-tunnel.pem.sample /tmp/$(DIST_NAME)/certs/ || true
 	@# Include wiki if present
 	@if [ -d wiki ]; then \
 		cp -r wiki /tmp/$(DIST_NAME)/wiki; \
