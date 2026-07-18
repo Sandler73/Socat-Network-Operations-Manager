@@ -34,8 +34,8 @@ make lint        # ShellCheck
 
 **New tests added:**
 
-- [ ] Yes — describe below
-- [ ] No — explain why not
+- [ ] Yes - describe below
+- [ ] No - explain why not
 
 <!-- If new tests were added, list them -->
 
@@ -82,4 +82,3 @@ make lint        # ShellCheck
 ```
 
 </details>
-
