@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
+#
+# ============================ GENERATED FILE ============================
+# This single-file script is assembled by scripts/build-dist.sh from the
+# module sources under lib/. Do not edit socat_manager.sh directly - edit
+# the relevant lib/NN_*.sh module and rebuild with `make build`. The
+# single-file form is the distributed, self-contained artifact.
+# =======================================================================
 #======================================================================
 # SCRIPT     : socat_manager.sh
 #======================================================================
-# Synopsis   : Comprehensive socat-based network listener, forwarder,
+# Synopsis   : socat-based network listener, forwarder,
 #              tunneler, and traffic redirector with reliability and
 #              multi-session management.
 #
 # Description: Provides a unified interface for socat network operations
-#              across seven operational modes:
+#              across eight operational modes:
 #
 #              listen   - Start a single TCP/UDP listener on a port
 #              batch    - Start multiple listeners from port list/range
-#              forward  - Forward traffic between local↔remote endpoints
+#              forward  - Forward traffic between local/remote endpoints
 #              tunnel   - Create encrypted (OpenSSL) tunnels via socat
 #              redirect - Redirect/proxy traffic transparently
 #              status   - Display all active managed sessions
 #              stop     - Stop sessions by ID, name, port, PID, or all
+#              audit    - Review recorded lifecycle events (SQLite store)
 #
 #              All modes include automatic session tracking via unique
 #              session IDs, process group (PGID) management, per-session
@@ -26,8 +34,22 @@
 #              individually, and --dual-stack to launch both TCP and UDP
 #              sessions simultaneously on the same port.
 #
-#              All operational modes support --capture for verbose hex
-#              dump traffic logging via socat -v.
+#              All operational modes support --capture for a text-readable
+#              hex + ASCII traffic dump via socat -v -x (written to a
+#              per-session capture log).
+#
+#              The listener modes (listen, batch, forward, tunnel, redirect)
+#              additionally support source-address access control via
+#              --allow <CIDR> (socat range=) and --tcpwrap [NAME]
+#              (/etc/hosts.allow and /etc/hosts.deny). Tunnel mode accepts
+#              --key-type <rsa|ec> to select the self-signed key algorithm.
+#
+#              Logging is configurable: --log-format <text|json> selects the
+#              file format (NDJSON for pipelines) and --log-level
+#              <DEBUG|INFO|WARNING|ERROR|CRITICAL> sets the minimum severity
+#              emitted (-v/--verbose forces DEBUG). When sqlite3 is present,
+#              session launches, stops, restarts, and crashes are recorded to
+#              an audit store reviewable with the audit command.
 #
 #              When invoked with no arguments, the script launches an
 #              interactive menu-driven interface with guided input,
@@ -49,6 +71,12 @@
 #              - Auto-restart via --watchdog flag for crash recovery
 #              - Batch mode accepts port lists, ranges, or config files
 #              - Tunnel mode generates self-signed certs if none provided
+#                (RSA-2048 by default, or EC prime256v1 via --key-type ec)
+#              - Source-address access control on listener modes via --allow
+#                (CIDR range) and --tcpwrap (TCP wrappers)
+#              - Optional SQLite audit store records session lifecycle events
+#                when sqlite3 is available (opt out with SOCAT_MANAGER_AUDIT)
+#              - Runtime data directory is overridable with SOCAT_MANAGER_BASE
 #              - All socat PIDs and PGIDs tracked for clean shutdown
 #              - Script returns to prompt immediately after launch
 #                (no terminal blocking; status/stop from same terminal)
@@ -105,9 +133,10 @@
 #   bash socat_manager.sh
 #   bash socat_manager.sh menu
 #
-# Version    : 2.3.0
+# Version    : 2.5.1
 # Dependencies: socat, openssl (for tunnel mode), ss/netstat (for status),
-#              setsid (util-linux), flock (util-linux, for session locking)
+#              setsid (util-linux), flock (util-linux, for session locking),
+#              sqlite3 (optional, enables the audit store and audit command)
 #======================================================================
 
 set -euo pipefail
@@ -119,14 +148,43 @@ set -euo pipefail
 # Script metadata
 readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}" .sh)"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_VERSION="2.3.0"
+# Absolute path to this script file, used to re-exec ourselves as a detached
+# watchdog supervisor (see WATCHDOG / AUTO-RESTART). Resolved from BASH_SOURCE
+# so it is correct regardless of the invocation name or the caller's CWD.
+readonly SCRIPT_SELF="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_VERSION="2.5.1"
 readonly SCRIPT_PID="$$"
 
 # Directory structure
-readonly LOG_DIR="${SCRIPT_DIR}/logs"
-readonly SESSION_DIR="${SCRIPT_DIR}/sessions"
-readonly CONF_DIR="${SCRIPT_DIR}/conf"
-readonly CERT_DIR="${SCRIPT_DIR}/certs"
+#
+# Runtime data (logs, sessions, conf, certs) lives under a base directory.
+# Resolution order:
+#   1. SOCAT_MANAGER_BASE environment variable (explicit override)
+#   2. The script's own directory (SCRIPT_DIR)
+# The override lets the tool run against a dedicated data directory (for example
+# under /var/lib) instead of writing beside the script, and keeps concurrent or
+# containerised instances isolated. The resolved value is exported so the
+# detached watchdog supervisor (a re-exec of this script) derives the same paths.
+if [[ -n "${SOCAT_MANAGER_BASE:-}" ]]; then
+    if [[ -d "${SOCAT_MANAGER_BASE}" ]]; then
+        readonly BASE_DIR="$(cd "${SOCAT_MANAGER_BASE}" && pwd)"
+    else
+        # Directory need not exist yet (_ensure_dirs creates it); just make the
+        # path absolute so every process resolves it identically.
+        case "${SOCAT_MANAGER_BASE}" in
+            /*) readonly BASE_DIR="${SOCAT_MANAGER_BASE}" ;;
+            *)  readonly BASE_DIR="$(pwd)/${SOCAT_MANAGER_BASE}" ;;
+        esac
+    fi
+else
+    readonly BASE_DIR="${SCRIPT_DIR}"
+fi
+export SOCAT_MANAGER_BASE="${BASE_DIR}"
+
+readonly LOG_DIR="${BASE_DIR}/logs"
+readonly SESSION_DIR="${BASE_DIR}/sessions"
+readonly CONF_DIR="${BASE_DIR}/conf"
+readonly CERT_DIR="${BASE_DIR}/certs"
 
 # Timestamp for this execution (used in log filenames)
 readonly EXEC_TIMESTAMP="$(date '+%Y-%m-%dT%H-%M-%S')"
@@ -194,6 +252,44 @@ readonly SYM_SESSION="■"
 
 VERBOSE_MODE=false  # Set by --verbose / -v flag
 
+# Log output format for the master and session log files. "text" produces the
+# structured line format; "json" produces one JSON object per line (NDJSON) for
+# ingestion by log pipelines. Console output is always human-readable regardless.
+# Defaults from SOCAT_MANAGER_LOG_FORMAT and may be overridden by --log-format.
+LOG_FORMAT="${SOCAT_MANAGER_LOG_FORMAT:-text}"
+case "${LOG_FORMAT}" in
+    text|json) ;;
+    *) LOG_FORMAT="text" ;;
+esac
+
+# Minimum severity to emit to the master log and console. Messages ranked below
+# this level are suppressed from both. Order (low to high):
+# DEBUG < INFO < WARNING < ERROR < CRITICAL. Defaults from
+# SOCAT_MANAGER_LOG_LEVEL and may be overridden by --log-level. The --verbose /
+# -v flag lowers the effective threshold to DEBUG so debug output is shown
+# regardless of this setting.
+LOG_LEVEL="${SOCAT_MANAGER_LOG_LEVEL:-INFO}"
+case "${LOG_LEVEL}" in
+    DEBUG|INFO|WARNING|ERROR|CRITICAL) ;;
+    *) LOG_LEVEL="INFO" ;;
+esac
+
+# Function: _log_level_rank
+# Description: Map a log level name to a numeric rank for threshold comparison.
+# Parameters:
+#   $1 - level name
+# Outputs: integer rank (unknown level maps to INFO's rank)
+_log_level_rank() {
+    case "${1:-INFO}" in
+        DEBUG)    echo 0 ;;
+        INFO)     echo 1 ;;
+        WARNING)  echo 2 ;;
+        ERROR)    echo 3 ;;
+        CRITICAL) echo 4 ;;
+        *)        echo 1 ;;
+    esac
+}
+
 # Terminal detection: disable color codes when stderr is not a terminal
 # (e.g., when output is piped to a file or another command)
 USE_COLOR=true
@@ -218,11 +314,30 @@ _ensure_dirs() {
     _DIRS_ENSURED=true
 }
 
+# Function: _json_escape
+# Description: Escape a string for safe inclusion inside a JSON double-quoted
+#              value. Handles backslash, double quote, and the common control
+#              characters (tab, carriage return, newline).
+# Parameters:
+#   $1 - string to escape
+# Outputs: the escaped string (no surrounding quotes)
+_json_escape() {
+    local s="${1:-}"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "${s}"
+}
+
 # Function: _log_write
-# Description: Core log writer - appends structured entry to master log
-#              and optionally echoes to console with color coding.
-#              Log format follows structured logging best practices:
+# Description: Core log writer - appends a structured entry to the master log
+#              and optionally echoes to the console with color coding. The file
+#              format follows LOG_FORMAT: "text" writes
 #              TIMESTAMP [LEVEL] [corr:ID] [component] message
+#              and "json" writes one JSON object per line. Console output is
+#              always human-readable.
 # Parameters:
 #   $1 - Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 #   $2 - Message text
@@ -231,24 +346,34 @@ _log_write() {
     local level="${1:-INFO}"
     local message="${2:-}"
     local component="${3:-main}"
+
+    # Threshold filter: suppress messages ranked below the configured LOG_LEVEL
+    # from both the file and the console. The --verbose / -v flag lowers the
+    # effective threshold to DEBUG so debug output is always shown when set.
+    local effective_level="${LOG_LEVEL}"
+    [[ "${VERBOSE_MODE}" == true ]] && effective_level="DEBUG"
+    if (( $(_log_level_rank "${level}") < $(_log_level_rank "${effective_level}") )); then
+        return 0
+    fi
+
     local timestamp
     timestamp="$(date '+%Y-%m-%dT%H:%M:%S.%3N')"
 
-    # Structured log line for file output
-    local log_line="${timestamp} [${level}] [corr:${CORRELATION_ID}] [${component}] ${message}"
+    # File log line - text or JSON per LOG_FORMAT.
+    local log_line
+    if [[ "${LOG_FORMAT}" == json ]]; then
+        log_line="{\"ts\":\"${timestamp}\",\"level\":\"${level}\",\"correlation_id\":\"${CORRELATION_ID}\",\"component\":\"$(_json_escape "${component}")\",\"message\":\"$(_json_escape "${message}")\"}"
+    else
+        log_line="${timestamp} [${level}] [corr:${CORRELATION_ID}] [${component}] ${message}"
+    fi
 
     # Always write to master log file
     echo "${log_line}" >> "${MASTER_LOG}" 2>/dev/null || true
 
-    # Console output: DEBUG only when verbose, all others always
-    local console_output=false
-    case "${level}" in
-        DEBUG)    [[ "${VERBOSE_MODE}" == true ]] && console_output=true ;;
-        INFO)     console_output=true ;;
-        WARNING)  console_output=true ;;
-        ERROR)    console_output=true ;;
-        CRITICAL) console_output=true ;;
-    esac
+    # Console output: everything that passed the threshold filter above is shown
+    # on the console (DEBUG reaches here only when the effective threshold is
+    # DEBUG, i.e. --log-level DEBUG or --verbose).
+    local console_output=true
 
     if [[ "${console_output}" == true ]]; then
         local color="${CLR_WHITE}" symbol="${SYM_INFO}"
@@ -389,8 +514,8 @@ validate_port_range() {
         return 1
     fi
 
-    if (( start >= end )); then
-        log_error "Range start (${start}) must be less than end (${end})" "validation"
+    if (( start > end )); then
+        log_error "Range start (${start}) must not exceed end (${end})" "validation"
         return 1
     fi
 
@@ -472,25 +597,58 @@ validate_hostname() {
         return 0
     fi
 
-    # IPv6 validation (accepts standard and compressed forms)
-    # Length: minimum 2 chars (::), maximum 39 chars (full expanded)
-    # Max 7 colons (8 groups separated by 7 colons)
-    if [[ "${host}" =~ ^[0-9a-fA-F:]+$ ]] && [[ "${host}" == *":"* ]]; then
-        local _ipv6_len=${#host}
-        if (( _ipv6_len < 2 || _ipv6_len > 39 )); then
-            log_error "Invalid IPv6 address: '${host}' (length ${_ipv6_len}, expected 2-39)" "validation"
+    # IPv6 validation (standard and :: compressed forms).
+    if [[ "${host}" == *:* ]] && [[ "${host}" =~ ^[0-9a-fA-F:]+$ ]]; then
+        # No run of three or more colons.
+        if [[ "${host}" == *":::"* ]]; then
+            log_error "Invalid IPv6 address: '${host}' (':::' is not allowed)" "validation"
             return 1
         fi
-        # Count colons — max 7 in a valid IPv6 address
-        local _colon_count="${host//[^:]/}"
-        if (( ${#_colon_count} > 7 )); then
-            log_error "Invalid IPv6 address: '${host}' (too many colons)" "validation"
-            return 1
+        # At most one '::' compression. Remove the first '::'; a remaining '::'
+        # means there were two, which is invalid.
+        local _has_compress=0
+        if [[ "${host}" == *"::"* ]]; then
+            _has_compress=1
+            local _stripped="${host/::/}"
+            if [[ "${_stripped}" == *"::"* ]]; then
+                log_error "Invalid IPv6 address: '${host}' (multiple '::')" "validation"
+                return 1
+            fi
+        fi
+        # Each non-empty group must be 1-4 hex digits; count real groups.
+        local -a _groups
+        IFS=':' read -ra _groups <<< "${host}"
+        local _g _count=0
+        for _g in "${_groups[@]}"; do
+            [[ -z "${_g}" ]] && continue
+            if ! [[ "${_g}" =~ ^[0-9a-fA-F]{1,4}$ ]]; then
+                log_error "Invalid IPv6 address: '${host}' (bad group '${_g}')" "validation"
+                return 1
+            fi
+            ((_count++)) || true
+        done
+        # Group-count rules: exactly 8 without compression; 1-7 with '::'
+        # (a bare '::' yields 0 real groups and is valid).
+        if (( _has_compress )); then
+            if (( _count > 7 )); then
+                log_error "Invalid IPv6 address: '${host}' (too many groups)" "validation"
+                return 1
+            fi
+        else
+            if (( _count != 8 )); then
+                log_error "Invalid IPv6 address: '${host}' (expected 8 groups, got ${_count})" "validation"
+                return 1
+            fi
         fi
         return 0
     fi
 
-    # Hostname validation (RFC 1123: alphanumeric, hyphens, dots)
+    # Hostname validation (RFC 1123). Total length is capped at 253 characters;
+    # each label is capped at 63 by the pattern below.
+    if (( ${#host} > 253 )); then
+        log_error "Hostname too long (${#host} chars, max 253): '${host}'" "validation"
+        return 1
+    fi
     if [[ "${host}" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
         return 0
     fi
@@ -554,16 +712,16 @@ validate_file_path() {
 
 
 # Function: validate_socat_opts
-# Description: Validate user-provided socat address options for safety.
-#              Allows only characters valid in socat address options:
-#              alphanumeric, equals, commas, dots, colons, hyphens,
-#              forward slashes, and underscores.
-#              Blocks all shell metacharacters to prevent command injection
-#              through the --socat-opts flag, which flows into bash -c
-#              command strings.
+# Description: Validate user-provided socat address options. Two passes:
+#              (1) a character whitelist that blocks shell metacharacters
+#              (defence in depth), and (2) a per-option keyword allowlist so
+#              only known-safe socat address options are accepted. Options that
+#              can spawn programs or shells (exec, system, shell) are absent from
+#              the allowlist and therefore rejected, as is any unknown keyword.
+#              These options are appended to a socat address (LISTEN:port,<opts>).
 # Parameters:
-#   $1 - socat options string to validate
-# Returns: 0 if safe, 1 if contains dangerous characters
+#   $1 - socat options string to validate (comma-separated)
+# Returns: 0 if safe, 1 otherwise
 validate_socat_opts() {
     local opts="${1:-}"
 
@@ -571,14 +729,209 @@ validate_socat_opts() {
         return 0  # Empty is valid (no extra opts)
     fi
 
-    # Whitelist: alphanumeric, equals, comma, dot, colon, hyphen, slash, underscore
-    # Reject everything else — especially shell metacharacters
+    # Pass 1 - character whitelist: alphanumeric, = , . : / _ -
+    # Rejects shell metacharacters, whitespace, and redirection characters.
     if [[ "${opts}" =~ [^a-zA-Z0-9=,.:/_-] ]]; then
         log_error "Forbidden characters in socat options '${opts}'. Allowed: alphanumeric, = , . : / _ -" "validation"
         return 1
     fi
 
+    # Pass 2 - keyword allowlist. Space-padded lists allow a simple containment
+    # test. Bare flags take no value; key=value options are matched on the key.
+    # Underscores in keys are normalised to hyphens for lookup.
+    local allowed_bare=" reuseaddr reuseport fork keepalive so-keepalive nodelay tcp-nodelay nonblock cork broadcast ignoreeof crnl rawer cool-write end-close dontroute o-nonblock "
+    local allowed_kv=" bind backlog keepidle tcp-keepidle keepintvl tcp-keepintvl keepcnt tcp-keepcnt mss tos ttl pf rcvbuf sndbuf rcvbuf-late sndbuf-late rcvtimeo sndtimeo retry interval connect-timeout mode perm user group uid gid range cert key cafile capath verify cipher method dhparam su setuid setgid "
+
+    local -a tokens
+    IFS=',' read -ra tokens <<< "${opts}"
+
+    local token key
+    for token in "${tokens[@]}"; do
+        [[ -z "${token}" ]] && continue
+        if [[ "${token}" == *=* ]]; then
+            key="${token%%=*}"
+            key="${key//_/-}"
+            if [[ "${allowed_kv}" != *" ${key} "* ]]; then
+                log_error "Unsupported socat option '${key}' in --socat-opts (not in allowlist)" "validation"
+                return 1
+            fi
+        else
+            key="${token//_/-}"
+            if [[ "${allowed_bare}" != *" ${key} "* ]]; then
+                log_error "Unsupported socat option '${key}' in --socat-opts (not in allowlist)" "validation"
+                return 1
+            fi
+        fi
+    done
+
     return 0
+}
+
+# Function: _expand_ipv6
+# Description: Expand a (validated) IPv6 address to eight colon-separated
+#              hexadecimal groups, resolving any "::" compression. The input is
+#              assumed to have already passed validate_hostname. Used by the
+#              source-range masker so host bits can be cleared per group.
+# Parameters:
+#   $1 - IPv6 address (compressed or full)
+# Outputs: Eight space-separated hex groups (e.g. "2001 db8 0 0 0 0 0 1")
+# Returns: 0 on success, 1 if the address cannot be expanded to 8 groups
+_expand_ipv6() {
+    local addr="${1:?IPv6 address required}"
+    local -a full=()
+
+    if [[ "${addr}" == *"::"* ]]; then
+        local lpart="${addr%%::*}" rpart="${addr##*::}"
+        local -a left=() right=() l2=() r2=()
+        [[ -n "${lpart}" ]] && IFS=':' read -ra left <<< "${lpart}"
+        [[ -n "${rpart}" ]] && IFS=':' read -ra right <<< "${rpart}"
+        local g
+        for g in "${left[@]}";  do [[ -n "${g}" ]] && l2+=("${g}"); done
+        for g in "${right[@]}"; do [[ -n "${g}" ]] && r2+=("${g}"); done
+        local fill=$(( 8 - ${#l2[@]} - ${#r2[@]} ))
+        (( fill < 0 )) && return 1
+        full=("${l2[@]}")
+        local i
+        for (( i = 0; i < fill; i++ )); do full+=("0"); done
+        full+=("${r2[@]}")
+    else
+        IFS=':' read -ra full <<< "${addr}"
+    fi
+
+    (( ${#full[@]} != 8 )) && return 1
+    printf '%s\n' "${full[*]}"
+    return 0
+}
+
+# Function: validate_source_range
+# Description: Validate an IPv4 or IPv6 source range in CIDR notation and render
+#              it in the form socat's address-level "range" option expects:
+#              "network/prefix" for IPv4 and "[network]/prefix" for IPv6. Host
+#              bits are permitted on input and masked off, so 10.1.2.3/8 and
+#              10.0.0.0/8 both yield 10.0.0.0/8.
+# Parameters:
+#   $1 - Source range in CIDR notation (e.g. 10.0.0.0/8 or 2001:db8::/32)
+# Outputs: The masked range value (without the "range=" prefix)
+# Returns: 0 if valid, 1 otherwise
+validate_source_range() {
+    local cidr="${1:-}"
+    # Trim surrounding whitespace.
+    cidr="${cidr#"${cidr%%[![:space:]]*}"}"
+    cidr="${cidr%"${cidr##*[![:space:]]}"}"
+
+    if [[ "${cidr}" != */* ]]; then
+        log_error "Invalid source range '${cidr}': expected CIDR notation (address/prefix)" "validation"
+        return 1
+    fi
+
+    local addr="${cidr%/*}" prefix="${cidr##*/}"
+    if ! [[ "${prefix}" =~ ^[0-9]+$ ]]; then
+        log_error "Invalid source range '${cidr}': non-numeric prefix" "validation"
+        return 1
+    fi
+
+    # ---- IPv4 ----
+    if [[ "${addr}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        local -a oct
+        IFS='.' read -ra oct <<< "${addr}"
+        local o
+        for o in "${oct[@]}"; do
+            if (( o > 255 )); then
+                log_error "Invalid source range '${cidr}': octet ${o} > 255" "validation"
+                return 1
+            fi
+        done
+        if (( prefix > 32 )); then
+            log_error "Invalid source range '${cidr}': IPv4 prefix must be 0-32" "validation"
+            return 1
+        fi
+        local ipnum=$(( (oct[0] << 24) | (oct[1] << 16) | (oct[2] << 8) | oct[3] ))
+        local mask
+        if (( prefix == 0 )); then
+            mask=0
+        else
+            mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+        fi
+        local net=$(( ipnum & mask ))
+        printf '%d.%d.%d.%d/%d\n' \
+            $(( (net >> 24) & 255 )) $(( (net >> 16) & 255 )) \
+            $(( (net >> 8) & 255 ))  $(( net & 255 )) "${prefix}"
+        return 0
+    fi
+
+    # ---- IPv6 ----
+    if [[ "${addr}" == *:* ]] && validate_hostname "${addr}" >/dev/null 2>&1; then
+        if (( prefix > 128 )); then
+            log_error "Invalid source range '${cidr}': IPv6 prefix must be 0-128" "validation"
+            return 1
+        fi
+        local groups
+        if ! groups="$(_expand_ipv6 "${addr}")"; then
+            log_error "Invalid source range '${cidr}': malformed IPv6 network" "validation"
+            return 1
+        fi
+        local -a grp
+        read -ra grp <<< "${groups}"
+        # Mask host bits group by group (each group covers 16 bits).
+        local idx val gbits gmask
+        for idx in "${!grp[@]}"; do
+            val=$(( 16#${grp[idx]} ))
+            local group_start=$(( idx * 16 ))
+            if (( prefix >= group_start + 16 )); then
+                :                                   # fully inside prefix: keep
+            elif (( prefix <= group_start )); then
+                val=0                               # fully outside prefix: zero
+            else
+                gbits=$(( prefix - group_start ))   # 1..15 bits retained
+                gmask=$(( (0xFFFF << (16 - gbits)) & 0xFFFF ))
+                val=$(( val & gmask ))
+            fi
+            grp[idx]=$(printf '%x' "${val}")
+        done
+        local masked
+        masked="$(IFS=':'; echo "${grp[*]}")"
+        printf '[%s]/%d\n' "${masked}" "${prefix}"
+        return 0
+    fi
+
+    log_error "Invalid source range '${cidr}': expected IPv4 or IPv6 CIDR (e.g. 10.0.0.0/8, 2001:db8::/32)" "validation"
+    return 1
+}
+
+# Function: validate_tcpwrap_name
+# Description: Validate a TCP-wrappers daemon name for socat's tcpwrap= option.
+#              The name is looked up in /etc/hosts.allow and /etc/hosts.deny and
+#              is restricted to a short token so it cannot inject further socat
+#              options or shell metacharacters.
+# Parameters:
+#   $1 - Daemon name
+# Returns: 0 if valid, 1 otherwise
+validate_tcpwrap_name() {
+    local name="${1:-}"
+    if [[ ! "${name}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+        log_error "Invalid tcpwrap daemon name '${name}'. Allowed: 1-64 characters of alphanumerics and . _ -" "validation"
+        return 1
+    fi
+    return 0
+}
+
+# Function: build_filter_opts
+# Description: Assemble the listener source-filter option fragment from an
+#              optional allow-range and an optional TCP-wrappers name. The result
+#              is comma-prefixed so it can be appended directly to a listener's
+#              option list (e.g. "reuseaddr,fork" + fragment). Empty when neither
+#              filter is requested.
+# Parameters:
+#   $1 - Rendered range value (already validated), or empty
+#   $2 - Validated tcpwrap daemon name, or empty
+# Outputs: ",range=<value>[,tcpwrap=<name>]" or "" (empty)
+build_filter_opts() {
+    local range_value="${1:-}"
+    local tcpwrap_name="${2:-}"
+    local fragment=""
+    [[ -n "${range_value}" ]] && fragment+=",range=${range_value}"
+    [[ -n "${tcpwrap_name}" ]] && fragment+=",tcpwrap=${tcpwrap_name}"
+    printf '%s' "${fragment}"
 }
 
 # Function: validate_session_name
@@ -687,7 +1040,7 @@ generate_session_id() {
 #======================================================================
 # SESSION MANAGEMENT v2.2
 # Tracks all spawned socat processes via session files in sessions/.
-# Each session file uses .session extension and contains comprehensive
+# Each session file uses .session extension and contains full
 # metadata including PID, PGID, command, protocol, timestamps, and
 # session ID.
 #
@@ -728,7 +1081,7 @@ readonly SESSION_LOCK="${SESSION_DIR}/.lock"
 #              The lock is automatically released when the fd closes.
 # Returns: 0 if lock acquired, 1 if busy
 _session_lock() {
-    exec 200>"${SESSION_LOCK}" 2>/dev/null || return 1
+    { exec 200>"${SESSION_LOCK}"; } 2>/dev/null || return 1
     flock -n 200 2>/dev/null || {
         log_debug "Session directory locked by another process" "session"
         return 1
@@ -739,12 +1092,12 @@ _session_lock() {
 # Function: _session_unlock
 # Description: Release the advisory session lock by closing fd 200.
 _session_unlock() {
-    exec 200>&- 2>/dev/null || true
+    { exec 200>&-; } 2>/dev/null || true
 }
 
 # Function: session_register
 # Description: Register a new socat session by writing a session file
-#              with comprehensive metadata. Uses the session ID as the
+#              with full metadata. Uses the session ID as the
 #              primary key. File permissions set to 600 to protect
 #              command strings and PID information.
 # Parameters:
@@ -796,6 +1149,64 @@ EOF
 
     log_debug "Session registered: ${sid} (${name}, PID ${pid}, PGID ${pgid})" "session"
     log_session "${sid}" "INFO" "Session registered: name=${name} pid=${pid} pgid=${pgid} mode=${mode} proto=${proto} port=${lport}"
+}
+
+# Function: _session_write_field
+# Description: Update-or-append a single KEY=VALUE field in a session file.
+#              Atomic (writes a temp file then renames). The value is written
+#              literally via awk (-v), so it is not subject to regex or shell
+#              interpretation. Used to refresh mutable fields (PID/PGID) and to
+#              record watchdog metadata without rewriting the whole file.
+# Parameters:
+#   $1 - Session ID
+#   $2 - Field key (e.g., "PID")
+#   $3 - Field value
+# Returns: 0 on success, 1 on failure
+_session_write_field() {
+    local sid="${1:?Session ID required}"
+    local key="${2:?Field key required}"
+    local value="${3:-}"
+    local sf="${SESSION_DIR}/${sid}.session"
+
+    [[ -f "${sf}" ]] || return 1
+
+    local tmp="${sf}.tmp.$$"
+    if grep -q "^${key}=" "${sf}" 2>/dev/null; then
+        # Replace the existing line (exact key match, value written literally).
+        awk -F= -v k="${key}" -v v="${value}" \
+            '$1 == k { print k "=" v; next } { print }' \
+            "${sf}" > "${tmp}" 2>/dev/null || { rm -f "${tmp}" 2>/dev/null; return 1; }
+    else
+        # Append a new field.
+        cp "${sf}" "${tmp}" 2>/dev/null || { rm -f "${tmp}" 2>/dev/null; return 1; }
+        printf '%s=%s\n' "${key}" "${value}" >> "${tmp}"
+    fi
+
+    chmod 600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${sf}" 2>/dev/null || { rm -f "${tmp}" 2>/dev/null; return 1; }
+    return 0
+}
+
+# Function: session_update_process
+# Description: Refresh the PID and PGID recorded for a session. Called by the
+#              watchdog supervisor after every (re)launch so that status and
+#              stop always operate on the currently running socat process, never
+#              a stale PID from a crashed instance.
+# Parameters:
+#   $1 - Session ID
+#   $2 - New PID
+#   $3 - New PGID
+# Returns: 0 on success, 1 on failure
+session_update_process() {
+    local sid="${1:?Session ID required}"
+    local pid="${2:?PID required}"
+    local pgid="${3:?PGID required}"
+
+    _session_write_field "${sid}" "PID" "${pid}"   || return 1
+    _session_write_field "${sid}" "PGID" "${pgid}" || return 1
+    log_debug "Session ${sid} process refreshed: PID=${pid} PGID=${pgid}" "session"
+    log_session "${sid}" "INFO" "Process refreshed: PID=${pid} PGID=${pgid}"
+    return 0
 }
 
 # Function: session_unregister
@@ -1201,6 +1612,103 @@ session_cleanup_dead() {
 #   process tree including all fork children.
 #======================================================================
 
+# Global set by _spawn_socat with the verified socat PID (avoids $() subshell
+# blocking, matching the LAUNCH_SID convention).
+_SPAWNED_PID=""
+
+# Function: _spawn_socat
+# Description: Spawn a single socat instance using the PID-file handoff and
+#              verify it is alive. Sets _SPAWNED_PID with the real socat PID.
+#              Does NOT register a session - callers own registration. This is
+#              the shared primitive behind both the single-shot launcher and the
+#              watchdog supervisor, so the launch semantics stay identical.
+# Parameters:
+#   $1 - Session ID (names the staging file and default error log)
+#   $2 - Full socat command string
+#   $3 - Optional: stderr redirect file (capture log); defaults to error log
+#   $4 - Spawn mode: "setsid" (default, detaches into a new session/group for
+#        foreground launches) or "inline" (direct child, for a supervisor that
+#        is already a detached session leader and needs to wait on the child)
+# Returns: 0 on success (_SPAWNED_PID set), 1 on failure
+_spawn_socat() {
+    local sid="${1:?Session ID required}"
+    local socat_cmd="${2:?Socat command required}"
+    local stderr_redirect="${3:-}"
+    local spawn_mode="${4:-setsid}"
+
+    _SPAWNED_PID=""
+
+    local error_log="${LOG_DIR}/session-${sid}-error.log"
+    local target="${stderr_redirect:-${error_log}}"
+    local pid_file="${SESSION_DIR}/${sid}.launching"
+    rm -f "${pid_file}" 2>/dev/null || true
+
+    # Tokenize the command into an argv array. This is a plain field split on
+    # whitespace (socat address tokens never contain spaces) - NOT a shell parse:
+    # metacharacters such as ; $() ` and quotes are treated as literal argument
+    # text and no globbing occurs. The tokens are handed to the launcher as
+    # positional parameters and exec'd as "$@", so no component of the command is
+    # ever interpreted as shell code. This is defence in depth on top of the
+    # whitelist input validation performed by the mode parsers.
+    local -a socat_argv
+    read -ra socat_argv <<< "${socat_cmd}"
+    if [[ "${#socat_argv[@]}" -eq 0 || "${socat_argv[0]}" != "socat" ]]; then
+        log_error "Session ${sid} failed - malformed socat command" "launch"
+        return 1
+    fi
+
+    # Fixed launcher script - contains no interpolated user data. Positional
+    # parameters carry the variable parts:
+    #   $1 = PID staging file, $2 = stderr target, $3.. = socat argv
+    # The launcher records its own PID before exec (so the real socat PID is
+    # captured) and applies the fd redirections at exec time.
+    local launcher='pf="$1"; tg="$2"; shift 2; echo $$ > "$pf"; exec "$@" >/dev/null 2>>"$tg"'
+
+    if [[ "${spawn_mode}" == "inline" ]]; then
+        # Caller (the watchdog supervisor) is already a detached session leader.
+        # Launch socat as a direct child so the supervisor can wait on it; socat
+        # inherits the supervisor's session/process group for group-kill on stop.
+        bash -c "${launcher}" socat-launcher "${pid_file}" "${target}" "${socat_argv[@]}" &
+    else
+        # Detach into a fresh session/process group. $! would be the setsid
+        # wrapper (which forks and exits), so the real PID comes from the file.
+        setsid bash -c "${launcher}" socat-launcher "${pid_file}" "${target}" "${socat_argv[@]}" &>/dev/null &
+    fi
+
+    # Wait for the staging file to appear.
+    local wait_count=0
+    while [[ ! -f "${pid_file}" ]] && (( wait_count < PID_FILE_WAIT_ITERS )); do
+        sleep 0.1
+        ((wait_count++)) || true
+    done
+
+    if [[ ! -f "${pid_file}" ]]; then
+        log_error "Session ${sid} failed to start - PID file not created within timeout" "launch"
+        log_session "${sid}" "ERROR" "PID file not created within timeout"
+        return 1
+    fi
+
+    local socat_pid
+    socat_pid="$(cat "${pid_file}" 2>/dev/null | tr -d '[:space:]')"
+    rm -f "${pid_file}" 2>/dev/null || true
+
+    if [[ -z "${socat_pid}" ]] || ! [[ "${socat_pid}" =~ ^[0-9]+$ ]]; then
+        log_error "Session ${sid} failed - invalid PID in staging file" "launch"
+        return 1
+    fi
+
+    # Brief pause to verify socat bound the port and is stable.
+    sleep 0.3
+    if ! kill -0 "${socat_pid}" 2>/dev/null; then
+        log_error "Session ${sid} failed - process ${socat_pid} died immediately" "launch"
+        log_session "${sid}" "ERROR" "Process died immediately after launch (PID ${socat_pid})"
+        return 1
+    fi
+
+    _SPAWNED_PID="${socat_pid}"
+    return 0
+}
+
 # Function: launch_socat_session
 # Description: Launch a socat command in an isolated process group and
 #              register it as a managed session. Uses the PID-file handoff
@@ -1251,66 +1759,13 @@ launch_socat_session() {
     log_debug "Launching session ${sid} (${name}): ${socat_cmd}" "launch"
     log_session "${sid}" "INFO" "Launching: ${socat_cmd}"
 
-    # PID staging file: the launched process writes its PID here
-    # before exec'ing into socat. This gives us the real socat PID.
-    local pid_file="${SESSION_DIR}/${sid}.launching"
-    rm -f "${pid_file}" 2>/dev/null || true
-
-    # Session error log for non-capture mode stderr
-    local error_log="${LOG_DIR}/session-${sid}-error.log"
-
-    # Build the inner bash -c script:
-    #   1. Write our PID to the staging file (bash's PID before exec)
-    #   2. exec replaces bash with socat, preserving the same PID
-    #   3. All fd redirections are set up before exec so socat inherits clean fds
-    local inner_script=""
-    if [[ -n "${stderr_redirect}" ]]; then
-        # Capture mode: stderr → capture log file (for socat -v hex dumps)
-        inner_script="echo \$\$ > '${pid_file}'; exec ${socat_cmd} >/dev/null 2>>'${stderr_redirect}'"
-    else
-        # Normal mode: stderr → session error log
-        inner_script="echo \$\$ > '${pid_file}'; exec ${socat_cmd} >/dev/null 2>>'${error_log}'"
-    fi
-
-    # Launch via setsid for session/process group isolation.
-    # &>/dev/null prevents any setsid-level output from reaching the terminal.
-    # & backgrounds the setsid invocation so the script continues immediately.
-    setsid bash -c "${inner_script}" &>/dev/null &
-
-    # NOTE: We do NOT use $! here - that would give us the setsid wrapper PID
-    # which exits immediately. Instead we read the real PID from pid_file.
-
-    # Wait for the PID file to appear (inner bash writes it before exec)
-    local wait_count=0
-    while [[ ! -f "${pid_file}" ]] && (( wait_count < PID_FILE_WAIT_ITERS )); do
-        sleep 0.1
-        ((wait_count++)) || true
-    done
-
-    if [[ ! -f "${pid_file}" ]]; then
-        log_error "Session ${sid} (${name}) failed to start - PID file not created within timeout" "launch"
-        log_session "${sid}" "ERROR" "PID file not created within timeout"
+    # Spawn socat detached into its own session/process group and capture the
+    # verified PID via _SPAWNED_PID.
+    if ! _spawn_socat "${sid}" "${socat_cmd}" "${stderr_redirect}" "setsid"; then
+        log_error "Session ${sid} (${name}) failed to launch" "launch"
         return 1
     fi
-
-    # Read the actual socat PID from the staging file
-    local socat_pid
-    socat_pid="$(cat "${pid_file}" 2>/dev/null | tr -d '[:space:]')"
-    rm -f "${pid_file}" 2>/dev/null || true
-
-    if [[ -z "${socat_pid}" ]] || ! [[ "${socat_pid}" =~ ^[0-9]+$ ]]; then
-        log_error "Session ${sid} (${name}) failed - invalid PID in staging file" "launch"
-        return 1
-    fi
-
-    # Brief pause to verify socat bound the port and is stable
-    sleep 0.3
-
-    if ! kill -0 "${socat_pid}" 2>/dev/null; then
-        log_error "Session ${sid} (${name}) failed - process ${socat_pid} died immediately" "launch"
-        log_session "${sid}" "ERROR" "Process died immediately after launch (PID ${socat_pid})"
-        return 1
-    fi
+    local socat_pid="${_SPAWNED_PID}"
 
     # Under setsid, the socat process IS the session leader and process
     # group leader. Therefore PGID == PID. This is what makes
@@ -1322,6 +1777,10 @@ launch_socat_session() {
         "${mode}" "${proto}" "${lport}" "${socat_cmd}" "${rhost}" "${rport}"
 
     log_session "${sid}" "INFO" "Session active: PID=${socat_pid} PGID=${pgid}"
+
+    # Record the launch in the optional audit store (no-op when inactive).
+    _audit_record_event "launch" "${sid}" "${name}" "${mode}" "${proto}" \
+        "${lport}" "${rhost}" "${rport}" "${socat_pid}" "${pgid}" "single-shot launch"
 
     # Return session ID via global variable (avoids $() subshell blocking)
     LAUNCH_SID="${sid}"
@@ -1430,8 +1889,10 @@ get_alt_protocol() {
 # Description: Build a socat command string for a listener.
 #              Constructs a unidirectional listener that captures
 #              incoming data to a log file. When capture mode is enabled,
-#              socat's -v flag is added for verbose hex dump output
-#              on stderr (redirected to a capture log by the launcher).
+#              socat's -v -x flags add a text-readable hex + ASCII dump
+#              of the traffic on stderr (redirected to a capture log by the
+#              launcher). View it with any text tool (cat, less); it is not
+#              a pcap and is not read by tcpdump/wireshark.
 # Parameters:
 #   $1 - Protocol (tcp4, tcp6, udp4, udp6)
 #   $2 - Port number
@@ -1445,6 +1906,7 @@ build_socat_listen_cmd() {
     local logfile="${3:?Log file required}"
     local extra_opts="${4:-}"
     local capture="${5:-false}"
+    local filter_opts="${6:-}"
 
     # Map protocol to socat address type (uppercase as socat expects)
     local socat_proto
@@ -1471,17 +1933,19 @@ build_socat_listen_cmd() {
     if [[ -n "${extra_opts}" ]]; then
         listen_opts+=",${extra_opts}"
     fi
+    listen_opts+="${filter_opts}"
 
-    # Capture mode: add -v for verbose hex dump output on stderr.
-    # The launcher redirects stderr to a capture log file.
+    # Capture mode: add -v -x for a text-readable hex + ASCII traffic dump
+    # on stderr. The launcher redirects stderr to a capture log file.
     local verbose_flag=""
     if [[ "${capture}" == true ]]; then
-        verbose_flag="-v"
+        verbose_flag="-v -x"
     fi
 
     # Build the command:
     #   -u        = Unidirectional (from left to right) for logging listeners
-    #   -v        = Verbose hex dump (capture mode only, output on stderr)
+    #   -v -x     = Text-readable hex + ASCII traffic dump (capture mode only,
+#               written to stderr, redirected to the capture log)
     #   The listener captures incoming data to the log file
     #   creat     = Create file if it doesn't exist
     #   append    = Append to existing file (don't overwrite)
@@ -1492,7 +1956,7 @@ build_socat_listen_cmd() {
 # Description: Build a socat command for port forwarding (bidirectional).
 #              Creates a full-duplex proxy between a local listener and
 #              a remote target. When capture mode is enabled, socat's -v
-#              flag adds verbose hex dump output on stderr for both
+#              -v -x flags add a text-readable hex + ASCII dump on stderr for both
 #              directions of traffic.
 # Parameters:
 #   $1 - Listen protocol (tcp4, tcp6, udp4, udp6)
@@ -1502,6 +1966,30 @@ build_socat_listen_cmd() {
 #   $5 - Remote protocol (optional, defaults to match listen)
 #   $6 - Capture mode enabled (true/false, default: false)
 # Outputs: The constructed socat command string
+# Function: format_socat_endpoint
+# Description: Compose a socat remote endpoint address, bracketing IPv6 literal
+#              hosts. socat requires IPv6 literals in bracket form so the address
+#              parser can separate host from port - e.g. TCP6:[fe80::1]:443. A
+#              bare TCP6:fe80::1:443 is ambiguous and fails. Hostnames and IPv4
+#              addresses never contain a colon, so bracketing is applied only when
+#              a colon is present and the host is not already bracketed.
+# Parameters:
+#   $1 - socat address prefix (e.g. TCP4, TCP6, UDP6)
+#   $2 - Remote host (hostname, IPv4, or IPv6 literal)
+#   $3 - Remote port
+# Outputs: "<prefix>:<host-or-bracketed-host>:<port>"
+format_socat_endpoint() {
+    local prefix="${1:?Address prefix required}"
+    local host="${2:?Remote host required}"
+    local port="${3:?Remote port required}"
+
+    if [[ "${host}" == *:* && "${host}" != \[*\] ]]; then
+        host="[${host}]"
+    fi
+
+    printf '%s:%s:%s' "${prefix}" "${host}" "${port}"
+}
+
 build_socat_forward_cmd() {
     local listen_proto="${1:?Listen protocol required}"
     local lport="${2:?Local port required}"
@@ -1509,6 +1997,7 @@ build_socat_forward_cmd() {
     local rport="${4:?Remote port required}"
     local remote_proto="${5:-${listen_proto}}"
     local capture="${6:-false}"
+    local filter_opts="${7:-}"
 
     # Map protocols to socat address types
     local socat_listen socat_remote
@@ -1528,7 +2017,7 @@ build_socat_forward_cmd() {
     # Capture mode: add -v for verbose hex dump on stderr
     local verbose_flag=""
     if [[ "${capture}" == true ]]; then
-        verbose_flag="-v"
+        verbose_flag="-v -x"
     fi
 
     # Forwarding is bidirectional (no -u flag):
@@ -1539,14 +2028,15 @@ build_socat_forward_cmd() {
         listen_opts+=",backlog=${DEFAULT_BACKLOG}"
     fi
 
-    echo "socat ${verbose_flag} ${socat_listen}:${lport},${listen_opts} ${socat_remote}:${rhost}:${rport}"
+    listen_opts+="${filter_opts}"
+    echo "socat ${verbose_flag} ${socat_listen}:${lport},${listen_opts} $(format_socat_endpoint "${socat_remote}" "${rhost}" "${rport}")"
 }
 
 # Function: build_socat_tunnel_cmd
 # Description: Build a socat command for an encrypted (OpenSSL) tunnel.
 #              Accepts TLS connections on a local port and forwards
 #              plaintext traffic to a remote target. When capture mode
-#              is enabled, socat's -v flag adds verbose hex dump output
+#              is enabled, socat's -v -x flags add a text-readable hex + ASCII dump
 #              on stderr showing the decrypted traffic in both directions.
 # Parameters:
 #   $1 - Local port to listen on (encrypted endpoint)
@@ -1555,6 +2045,9 @@ build_socat_forward_cmd() {
 #   $4 - Certificate PEM file path
 #   $5 - Key PEM file path
 #   $6 - Capture mode enabled (true/false, default: false)
+#   $7 - Remote protocol family for the plaintext leg (tcp4/tcp6,
+#        default: tcp4). Lets an IPv6 remote target be reached over TCP6
+#        instead of being forced onto TCP4.
 # Outputs: The constructed socat command string
 build_socat_tunnel_cmd() {
     local lport="${1:?Local port required}"
@@ -1563,14 +2056,24 @@ build_socat_tunnel_cmd() {
     local cert="${4:?Certificate required}"
     local key="${5:?Key required}"
     local capture="${6:-false}"
+    local remote_proto="${7:-tcp4}"
+    local filter_opts="${8:-}"
 
     # Capture mode: add -v for verbose hex dump on stderr
     # For tunnels, this captures the DECRYPTED traffic between
     # the TLS termination point and the remote target.
     local verbose_flag=""
     if [[ "${capture}" == true ]]; then
-        verbose_flag="-v"
+        verbose_flag="-v -x"
     fi
+
+    # Map the remote leg to a socat TCP address type. Tunnels are TLS/TCP
+    # only; UDP is rejected earlier by the mode parser.
+    local socat_remote
+    case "${remote_proto}" in
+        tcp6) socat_remote="TCP6" ;;
+        *)    socat_remote="TCP4" ;;
+    esac
 
     # OpenSSL listener accepts encrypted connections and forwards
     # plaintext to the remote target:
@@ -1579,7 +2082,7 @@ build_socat_tunnel_cmd() {
     #   verify=0       - Don't verify client certificates (server mode)
     #   fork           - Handle multiple connections
     #   reuseaddr      - Allow rebinding immediately after close
-    echo "socat ${verbose_flag} OPENSSL-LISTEN:${lport},cert=${cert},key=${key},verify=0,reuseaddr,fork TCP4:${rhost}:${rport}"
+    echo "socat ${verbose_flag} OPENSSL-LISTEN:${lport},cert=${cert},key=${key},verify=0,reuseaddr,fork${filter_opts} $(format_socat_endpoint "${socat_remote}" "${rhost}" "${rport}")"
 }
 
 # Function: build_socat_redirect_cmd
@@ -1599,6 +2102,7 @@ build_socat_redirect_cmd() {
     local rhost="${3:?Remote host required}"
     local rport="${4:?Remote port required}"
     local capture="${5:-false}"
+    local filter_opts="${6:-}"
 
     # Map protocol to socat address types
     local socat_listen socat_remote
@@ -1613,7 +2117,7 @@ build_socat_redirect_cmd() {
     # capture traffic hex dumps to stderr (redirected to log by launcher)
     local verbose_flag=""
     if [[ "${capture}" == true ]]; then
-        verbose_flag="-v"
+        verbose_flag="-v -x"
     fi
 
     # Build listener options
@@ -1622,7 +2126,8 @@ build_socat_redirect_cmd() {
         listen_opts+=",backlog=${DEFAULT_BACKLOG}"
     fi
 
-    echo "socat ${verbose_flag} ${socat_listen}:${lport},${listen_opts} ${socat_remote}:${rhost}:${rport}"
+    listen_opts+="${filter_opts}"
+    echo "socat ${verbose_flag} ${socat_listen}:${lport},${listen_opts} $(format_socat_endpoint "${socat_remote}" "${rhost}" "${rport}")"
 }
 
 #======================================================================
@@ -1634,13 +2139,18 @@ build_socat_redirect_cmd() {
 # Function: generate_self_signed_cert
 # Description: Generate a self-signed certificate and key for TLS tunnels.
 #              Files are placed in the certs/ directory with restrictive
-#              permissions on the private key (600).
+#              permissions on the private key (600). The certificate carries a
+#              subjectAltName (modern TLS clients ignore CN), is signed with
+#              SHA-256 explicitly, and can use an RSA-2048 or an EC (prime256v1)
+#              key. Requires OpenSSL 1.1.1+ for the -addext option.
 # Parameters:
 #   $1 - Common Name for the certificate (default: localhost)
+#   $2 - Key type: "rsa" (default, RSA-2048) or "ec" (prime256v1)
 # Outputs: Echoes "CERT_PATH KEY_PATH" space-separated
 # Returns: 0 on success, 1 on failure
 generate_self_signed_cert() {
     local cn="${1:-localhost}"
+    local key_type="${2:-rsa}"
     local cert_file="${CERT_DIR}/socat-tunnel-${EXEC_TIMESTAMP}.pem"
     local key_file="${CERT_DIR}/socat-tunnel-${EXEC_TIMESTAMP}.key"
 
@@ -1650,20 +2160,36 @@ generate_self_signed_cert() {
         return 1
     fi
 
-    log_info "Generating self-signed certificate (CN=${cn})..." "cert"
+    # Build the subjectAltName from the CN. An IP literal becomes an IP SAN, a
+    # name becomes a DNS SAN; localhost identities are always included so a
+    # locally terminated tunnel validates without extra configuration.
+    local san
+    if [[ "${cn}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "${cn}" == *:* ]]; then
+        san="IP:${cn}"
+    else
+        san="DNS:${cn}"
+    fi
+    san="${san},DNS:localhost,IP:127.0.0.1"
 
-    # Generate RSA 2048-bit key and self-signed cert, valid 365 days
-    # -nodes    = No passphrase on private key
-    # -x509     = Output a self-signed certificate
-    # -newkey   = Generate a new key pair
-    # -keyout   = Private key output file
-    # -out      = Certificate output file
-    # -subj     = Certificate subject (avoids interactive prompts)
-    if openssl req -x509 -newkey rsa:2048 -nodes \
+    # Select the key algorithm. EC (prime256v1) yields a smaller, faster key;
+    # RSA-2048 remains the default for broad compatibility.
+    local -a newkey_args
+    if [[ "${key_type}" == "ec" ]]; then
+        newkey_args=(-newkey ec -pkeyopt ec_paramgen_curve:prime256v1)
+        log_info "Generating self-signed certificate (CN=${cn}, EC prime256v1)..." "cert"
+    else
+        newkey_args=(-newkey rsa:2048)
+        log_info "Generating self-signed certificate (CN=${cn}, RSA 2048)..." "cert"
+    fi
+
+    # -x509 self-signed cert, -nodes no key passphrase, -sha256 explicit digest,
+    # -subj non-interactive subject, -addext carries the subjectAltName.
+    if openssl req -x509 "${newkey_args[@]}" -nodes -sha256 \
         -keyout "${key_file}" \
         -out "${cert_file}" \
         -days 365 \
         -subj "/CN=${cn}/O=socat_manager/OU=tunnel" \
+        -addext "subjectAltName=${san}" \
         2>/dev/null; then
 
         # Restrict permissions on key file (private key protection)
@@ -1682,77 +2208,467 @@ generate_self_signed_cert() {
 }
 
 #======================================================================
-# WATCHDOG / AUTO-RESTART
-# Monitors a socat process and restarts it if it crashes.
-# Implements exponential backoff and max restart limits.
-# Respects stop signals via .stop file for graceful shutdown.
+# AUDIT STORE (optional, SQLite-backed)
+#
+# Records framework events - session launches, stops, watchdog restarts,
+# crashes, and errors - to a SQLite database for after-the-fact review.
+#
+# Availability and activation:
+#   The store is active only when the `sqlite3` command is available AND
+#   auditing is not disabled. Auditing is on by default when sqlite3 is
+#   present; it is turned off when SOCAT_MANAGER_AUDIT is set to a false-like
+#   value (0, false, no, off). On systems without sqlite3 the store is simply
+#   inactive - no error, no behavioural change.
+#
+# Environment variables:
+#   SOCAT_MANAGER_AUDIT                - false-like value disables auditing
+#   SOCAT_MANAGER_AUDIT_REDACT         - true-like value masks remote hosts
+#   SOCAT_MANAGER_AUDIT_DB             - override the database file path
+#   SOCAT_MANAGER_AUDIT_RETENTION_DAYS - prune events older than N days (0=keep)
+#
+# Injection safety:
+#   Every value is emitted as a properly escaped SQL literal (single quotes
+#   doubled) or, for integer columns, as a validated integer or NULL. No user
+#   value is ever concatenated into SQL unescaped.
 #======================================================================
 
-# Function: watchdog_loop
-# Description: Monitor a socat process and restart on crash. Runs in
-#              the background as a supervisor. Uses exponential backoff
-#              (1s, 2s, 4s, 8s... capped at 60s) to prevent rapid
-#              restart loops. Checks for a .stop file between restarts
-#              to support graceful shutdown.
+readonly AUDIT_SCHEMA_VERSION=1
+
+# Per-process guard so the schema is initialised at most once.
+_AUDIT_INITIALIZED=false
+# Set true once a "sqlite3 missing but audit requested" warning has been shown.
+_AUDIT_WARNED=false
+
+# Function: _audit_available
+# Description: True when the sqlite3 command-line tool is on PATH.
+_audit_available() {
+    command -v sqlite3 &>/dev/null
+}
+
+# Function: _audit_enabled
+# Description: True when auditing should record events: sqlite3 is available and
+#              SOCAT_MANAGER_AUDIT is not set to a false-like value. Emits a
+#              one-time warning if auditing was explicitly requested (a true-like
+#              value) but sqlite3 is unavailable.
+_audit_enabled() {
+    local raw
+    raw="$(printf '%s' "${SOCAT_MANAGER_AUDIT:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+    case "${raw}" in
+        0|false|no|off) return 1 ;;
+    esac
+
+    if ! _audit_available; then
+        case "${raw}" in
+            1|true|yes|on)
+                if [[ "${_AUDIT_WARNED}" != true ]]; then
+                    log_warning "Auditing requested but sqlite3 is not installed; audit store inactive" "audit"
+                    _AUDIT_WARNED=true
+                fi
+                ;;
+        esac
+        return 1
+    fi
+    return 0
+}
+
+# Function: _audit_redaction_enabled
+# Description: True when remote host values should be masked in recorded events.
+_audit_redaction_enabled() {
+    local raw
+    raw="$(printf '%s' "${SOCAT_MANAGER_AUDIT_REDACT:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "${raw}" in
+        1|true|yes|on) return 0 ;;
+    esac
+    return 1
+}
+
+# Function: _audit_retention_days
+# Description: Echo the configured retention window in days (0 = keep forever).
+_audit_retention_days() {
+    local raw="${SOCAT_MANAGER_AUDIT_RETENTION_DAYS:-}"
+    if [[ "${raw}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${raw}"
+    else
+        printf '0'
+    fi
+}
+
+# Function: _audit_db_path
+# Description: Echo the effective audit database path (env override or the
+#              default under the runtime base directory).
+_audit_db_path() {
+    if [[ -n "${SOCAT_MANAGER_AUDIT_DB:-}" ]]; then
+        printf '%s' "${SOCAT_MANAGER_AUDIT_DB}"
+    else
+        printf '%s' "${BASE_DIR}/audit/audit.db"
+    fi
+}
+
+# Function: _audit_sql_text
+# Description: Render a value as a SQL string literal (single quotes doubled) or
+#              NULL when empty. This is the SQLite-correct escaping for text.
+# Parameters: $1 - value
+_audit_sql_text() {
+    local v="${1:-}"
+    if [[ -z "${v}" ]]; then
+        printf 'NULL'
+    else
+        printf "'%s'" "${v//\'/\'\'}"
+    fi
+}
+
+# Function: _audit_sql_int
+# Description: Render a value as an integer literal or NULL when not an integer.
+# Parameters: $1 - value
+_audit_sql_int() {
+    local v="${1:-}"
+    if [[ "${v}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${v}"
+    else
+        printf 'NULL'
+    fi
+}
+
+# Function: _audit_init
+# Description: Create the audit directory and schema if needed. Idempotent and
+#              guarded so the schema is applied at most once per process.
+# Parameters: $1 - database path
+# Returns: 0 on success, 1 on failure
+_audit_init() {
+    local db="${1:?Database path required}"
+    [[ "${_AUDIT_INITIALIZED}" == true ]] && return 0
+
+    local dir
+    dir="$(dirname "${db}")"
+    mkdir -p "${dir}" 2>/dev/null || return 1
+    chmod 700 "${dir}" 2>/dev/null || true
+
+    if ! sqlite3 "${db}" "
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS events (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts             TEXT NOT NULL,
+            correlation_id TEXT,
+            event_type     TEXT NOT NULL,
+            session_id     TEXT,
+            name           TEXT,
+            mode           TEXT,
+            proto          TEXT,
+            lport          INTEGER,
+            rhost          TEXT,
+            rport          INTEGER,
+            pid            INTEGER,
+            pgid           INTEGER,
+            detail         TEXT,
+            redacted       INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+        CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+        PRAGMA user_version=${AUDIT_SCHEMA_VERSION};
+    " 2>/dev/null; then
+        return 1
+    fi
+
+    chmod 600 "${db}" 2>/dev/null || true
+    _AUDIT_INITIALIZED=true
+    return 0
+}
+
+# Function: _audit_record_event
+# Description: Record one framework event. A no-op when auditing is inactive, so
+#              callers can invoke it unconditionally. Applies optional remote-host
+#              redaction and, when configured, prunes events past the retention
+#              window.
+# Parameters:
+#   $1 - event_type (launch|stop|stop_failed|restart|crash|config_change|error)
+#   $2 - session id        $7  - remote host
+#   $3 - session name      $8  - remote port
+#   $4 - mode              $9  - pid
+#   $5 - protocol          $10 - pgid
+#   $6 - local port        $11 - detail
+_audit_record_event() {
+    _audit_enabled || return 0
+
+    local event_type="${1:?Event type required}"
+    local sid="${2:-}" name="${3:-}" mode="${4:-}" proto="${5:-}"
+    local lport="${6:-}" rhost="${7:-}" rport="${8:-}" pid="${9:-}" pgid="${10:-}" detail="${11:-}"
+
+    local db
+    db="$(_audit_db_path)"
+    _audit_init "${db}" || return 0
+
+    local redacted=0
+    if _audit_redaction_enabled && [[ -n "${rhost}" ]]; then
+        [[ -n "${detail}" ]] && detail="${detail//${rhost}/HOST-REDACTED}"
+        rhost="HOST-REDACTED"
+        redacted=1
+    fi
+
+    local ts
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    local sql="INSERT INTO events (ts,correlation_id,event_type,session_id,name,mode,proto,lport,rhost,rport,pid,pgid,detail,redacted) VALUES ($(_audit_sql_text "${ts}"),$(_audit_sql_text "${CORRELATION_ID}"),$(_audit_sql_text "${event_type}"),$(_audit_sql_text "${sid}"),$(_audit_sql_text "${name}"),$(_audit_sql_text "${mode}"),$(_audit_sql_text "${proto}"),$(_audit_sql_int "${lport}"),$(_audit_sql_text "${rhost}"),$(_audit_sql_int "${rport}"),$(_audit_sql_int "${pid}"),$(_audit_sql_int "${pgid}"),$(_audit_sql_text "${detail}"),${redacted});"
+
+    sqlite3 "${db}" "${sql}" 2>/dev/null || log_debug "audit: failed to record ${event_type} event" "audit"
+
+    local rd
+    rd="$(_audit_retention_days)"
+    if (( rd > 0 )); then
+        sqlite3 "${db}" "DELETE FROM events WHERE julianday(ts) < julianday('now','-${rd} days');" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+#======================================================================
+# WATCHDOG / AUTO-RESTART
+# Supervises a managed socat session and restarts it if it crashes.
+#
+# Design:
+#   A supervised session is launched by re-executing this script as a
+#   detached process (setsid) in a hidden "__supervise" mode. The
+#   supervisor becomes its own session/process-group leader, so it (and
+#   the socat children it starts) survive the exit of the foreground
+#   manager, and a single `kill -PGID` on stop terminates the whole tree.
+#
+#   The supervisor reads the full socat command and its parameters from
+#   the session file (the single source of truth), launches socat as a
+#   direct child via the PID-file handoff, records its own PID/PGID and
+#   the live socat PID into the session file, then blocks on `wait`. When
+#   socat exits it checks the .stop signal for a deliberate stop, applies
+#   bounded exponential backoff (1s→60s), relaunches, and - critically -
+#   refreshes the session file PID so status/stop never see a stale PID.
+#
+# Session-file fields used by the supervisor:
+#   SOCAT_CMD          - command to (re)launch
+#   STDERR_LOG         - capture/stderr redirect target (may be empty)
+#   WATCHDOG           - "true" for supervised sessions
+#   WATCHDOG_MAX       - maximum restarts before giving up
+#   WATCHDOG_INTERVAL  - base health/backoff interval (seconds)
+#   SUPERVISOR_PID     - the supervisor's own PID (recorded at startup)
+#======================================================================
+
+# Function: launch_supervised_session
+# Description: Register a supervised session and spawn a detached watchdog
+#              supervisor that owns the socat process. Mirrors the parameter
+#              contract of launch_socat_session and returns the session ID via
+#              the LAUNCH_SID global.
+# Parameters:
+#   $1 - Session name
+#   $2 - Mode
+#   $3 - Protocol
+#   $4 - Local port
+#   $5 - Full socat command string
+#   $6 - Optional: remote host
+#   $7 - Optional: remote port
+#   $8 - Optional: stderr redirect file (capture log)
+#   $9 - Optional: max restarts   (default: DEFAULT_WATCHDOG_MAX_RESTARTS)
+#   $10- Optional: base interval   (default: DEFAULT_WATCHDOG_INTERVAL)
+# Returns: 0 on success (LAUNCH_SID set), 1 on failure
+launch_supervised_session() {
+    local name="${1:?Session name required}"
+    local mode="${2:?Mode required}"
+    local proto="${3:?Protocol required}"
+    local lport="${4:?Local port required}"
+    local socat_cmd="${5:?Socat command required}"
+    local rhost="${6:-}"
+    local rport="${7:-}"
+    local stderr_redirect="${8:-}"
+    local max_restarts="${9:-${DEFAULT_WATCHDOG_MAX_RESTARTS}}"
+    local interval="${10:-${DEFAULT_WATCHDOG_INTERVAL}}"
+
+    LAUNCH_SID=""
+
+    # Enforce the same session cap as the single-shot launcher.
+    local _active_count=0
+    for _sf in "${SESSION_DIR}"/*.session; do
+        [[ -f "${_sf}" ]] && ((_active_count++)) || true
+    done
+    if (( _active_count >= MAX_SESSIONS )); then
+        log_error "Maximum session count (${MAX_SESSIONS}) reached. Stop existing sessions first." "watchdog"
+        return 1
+    fi
+
+    local sid
+    sid="$(generate_session_id)" || {
+        log_error "Failed to generate session ID for '${name}'" "watchdog"
+        return 1
+    }
+
+    # Register the session up front with a placeholder process identity; the
+    # supervisor fills in the real PID/PGID once socat is running.
+    session_register "${sid}" "${name}" "0" "0" \
+        "${mode}" "${proto}" "${lport}" "${socat_cmd}" "${rhost}" "${rport}"
+
+    # Record watchdog metadata for the supervisor to read.
+    _session_write_field "${sid}" "WATCHDOG" "true"
+    _session_write_field "${sid}" "WATCHDOG_MAX" "${max_restarts}"
+    _session_write_field "${sid}" "WATCHDOG_INTERVAL" "${interval}"
+    _session_write_field "${sid}" "STDERR_LOG" "${stderr_redirect}"
+
+    # Spawn the detached supervisor by re-executing this script. setsid makes it
+    # a session leader that survives manager exit; the supervisor records its own
+    # PID/PGID and refreshes the socat PID as it runs.
+    setsid bash "${SCRIPT_SELF}" __supervise "${sid}" </dev/null &>/dev/null &
+
+    # Wait for the supervisor to bring socat up (PID becomes non-zero and alive).
+    local wait_count=0
+    local live=false
+    while (( wait_count < PID_FILE_WAIT_ITERS + 10 )); do
+        local cur_pid
+        cur_pid="$(session_read_field "${SESSION_DIR}/${sid}.session" "PID")"
+        if [[ -n "${cur_pid}" && "${cur_pid}" != "0" ]] && kill -0 "${cur_pid}" 2>/dev/null; then
+            live=true
+            break
+        fi
+        sleep 0.1
+        ((wait_count++)) || true
+    done
+
+    if [[ "${live}" != true ]]; then
+        log_error "Supervised session ${sid} (${name}) failed to come up" "watchdog"
+        # Signal the supervisor to give up and remove the registration.
+        touch "${SESSION_DIR}/${sid}.stop" 2>/dev/null || true
+        sleep 0.3
+        session_unregister "${sid}"
+        return 1
+    fi
+
+    log_session "${sid}" "INFO" "Supervised session active (watchdog)"
+
+    # Record the supervised launch in the optional audit store.
+    _audit_record_event "launch" "${sid}" "${name}" "${mode}" "${proto}" \
+        "${lport}" "${rhost}" "${rport}" "" "" "supervised launch (watchdog, max=${max_restarts})"
+
+    LAUNCH_SID="${sid}"
+    return 0
+}
+
+# Function: _watchdog_run
+# Description: The supervisor loop. Runs in the detached __supervise process.
+#              Reads its parameters from the session file, then repeatedly
+#              launches socat, refreshes the recorded PID, waits for exit, and
+#              restarts with exponential backoff until the .stop signal is seen
+#              or the restart budget is exhausted.
 # Parameters:
 #   $1 - Session ID
-#   $2 - Session name
-#   $3 - Full socat command to run
-#   $4 - Max restarts (default: DEFAULT_WATCHDOG_MAX_RESTARTS)
-#   $5 - Check interval in seconds (default: DEFAULT_WATCHDOG_INTERVAL)
-watchdog_loop() {
-    local session_id="${1:?Session ID required}"
-    local session_name="${2:?Session name required}"
-    local socat_cmd="${3:?Socat command required}"
-    local max_restarts="${4:-${DEFAULT_WATCHDOG_MAX_RESTARTS}}"
-    local interval="${5:-${DEFAULT_WATCHDOG_INTERVAL}}"
+_watchdog_run() {
+    local sid="${1:?Session ID required}"
+    local sf="${SESSION_DIR}/${sid}.session"
+
+    if [[ ! -f "${sf}" ]]; then
+        log_error "Watchdog: session ${sid} not found" "watchdog"
+        return 1
+    fi
+
+    local name socat_cmd stderr_log max_restarts interval
+    name="$(session_read_field "${sf}" "SESSION_NAME")"
+    socat_cmd="$(session_read_field "${sf}" "SOCAT_CMD")"
+    stderr_log="$(session_read_field "${sf}" "STDERR_LOG")"
+    max_restarts="$(session_read_field "${sf}" "WATCHDOG_MAX")"
+    interval="$(session_read_field "${sf}" "WATCHDOG_INTERVAL")"
+    [[ -z "${max_restarts}" ]] && max_restarts="${DEFAULT_WATCHDOG_MAX_RESTARTS}"
+    [[ -z "${interval}" ]] && interval="${DEFAULT_WATCHDOG_INTERVAL}"
+
+    # Fields used only to enrich audit records.
+    local wd_mode wd_proto wd_lport wd_rhost wd_rport
+    wd_mode="$(session_read_field "${sf}" "MODE")"
+    wd_proto="$(session_read_field "${sf}" "PROTOCOL")"
+    wd_lport="$(session_read_field "${sf}" "LOCAL_PORT")"
+    wd_rhost="$(session_read_field "${sf}" "REMOTE_HOST")"
+    wd_rport="$(session_read_field "${sf}" "REMOTE_PORT")"
+
+    # Record the supervisor's own identity. As a setsid session leader its
+    # process group equals its PID; stop uses this to terminate the whole tree.
+    _session_write_field "${sid}" "SUPERVISOR_PID" "$$"
+    _session_write_field "${sid}" "PGID" "$$"
+
+    log_info "Watchdog supervising '${name}' [${sid}] (max ${max_restarts} restarts)" "watchdog"
 
     local restart_count=0
-    local backoff=1  # Initial backoff in seconds
-
-    log_info "Watchdog started for '${session_name}' [${session_id}] (max ${max_restarts} restarts)" "watchdog"
+    local backoff=1
 
     while (( restart_count <= max_restarts )); do
-        # Launch the socat process via bash -c (not eval, which enables
-        # arbitrary code execution if socat_cmd contains shell metacharacters).
-        # NOTE: This tracks PID via $! which is less reliable than the
-        # setsid + PID-file handoff used by launch_socat_session. A full
-        # refactor to call launch_socat_session on each restart is the
-        # recommended long-term improvement.
-        bash -c "${socat_cmd}" &
-        local pid=$!
+        # Deliberate stop requested before (re)launch?
+        if [[ -f "${SESSION_DIR}/${sid}.stop" ]]; then
+            rm -f "${SESSION_DIR}/${sid}.stop" 2>/dev/null || true
+            log_info "Watchdog: stop signal received for '${name}' [${sid}]" "watchdog"
+            break
+        fi
 
-        log_info "Process launched: PID ${pid} (restart #${restart_count})" "watchdog"
-        log_session "${session_id}" "INFO" "Watchdog launched socat PID ${pid} (restart #${restart_count})"
+        # Launch socat inline (this supervisor is already detached) so we can
+        # wait on it directly and it inherits our process group.
+        if ! _spawn_socat "${sid}" "${socat_cmd}" "${stderr_log}" "inline"; then
+            log_error "Watchdog: socat failed to start for '${name}' [${sid}]" "watchdog"
+            ((restart_count++)) || true
+            (( restart_count > max_restarts )) && break
+            sleep "${backoff}"
+            backoff=$(( backoff * 2 )); (( backoff > 60 )) && backoff=60
+            continue
+        fi
 
-        # Wait for the process to exit
+        local pid="${_SPAWNED_PID}"
+        # Refresh the recorded PID so status/stop track the live process. PGID
+        # stays the supervisor's group (constant across restarts).
+        _session_write_field "${sid}" "PID" "${pid}"
+        log_info "Watchdog: socat PID ${pid} up (restart #${restart_count}) [${sid}]" "watchdog"
+        log_session "${sid}" "INFO" "Watchdog (re)launched socat PID ${pid} (restart #${restart_count})"
+
+        # The initial bring-up is already recorded as "launch"; only record
+        # subsequent respawns as restart events.
+        if (( restart_count >= 1 )); then
+            _audit_record_event "restart" "${sid}" "${name}" "${wd_mode}" "${wd_proto}" \
+                "${wd_lport}" "${wd_rhost}" "${wd_rport}" "${pid}" "$$" "watchdog restart #${restart_count}"
+        fi
+
+        # Block until socat exits (zero CPU while healthy).
         wait "${pid}" 2>/dev/null || true
-        local exit_code=$?
 
-        # Check if we were signaled to stop (graceful shutdown via .stop file)
-        if [[ -f "${SESSION_DIR}/${session_id}.stop" ]]; then
-            rm -f "${SESSION_DIR}/${session_id}.stop" 2>/dev/null
-            log_info "Watchdog: graceful stop requested for '${session_name}' [${session_id}]" "watchdog"
+        # Deliberate stop while running?
+        if [[ -f "${SESSION_DIR}/${sid}.stop" ]]; then
+            rm -f "${SESSION_DIR}/${sid}.stop" 2>/dev/null || true
+            log_info "Watchdog: graceful stop for '${name}' [${sid}]" "watchdog"
             break
         fi
 
         ((restart_count++)) || true
-
         if (( restart_count > max_restarts )); then
-            log_error "Watchdog: max restarts (${max_restarts}) reached for '${session_name}' [${session_id}]" "watchdog"
+            log_error "Watchdog: max restarts (${max_restarts}) reached for '${name}' [${sid}]" "watchdog"
+            _audit_record_event "crash" "${sid}" "${name}" "${wd_mode}" "${wd_proto}" \
+                "${wd_lport}" "${wd_rhost}" "${wd_rport}" "" "$$" "watchdog gave up after ${max_restarts} restarts"
             break
         fi
 
-        log_warning "Process exited (code ${exit_code}). Restarting in ${backoff}s... (${restart_count}/${max_restarts})" "watchdog"
+        log_warning "Watchdog: socat exited; restarting in ${backoff}s (${restart_count}/${max_restarts}) [${sid}]" "watchdog"
         sleep "${backoff}"
-
-        # Exponential backoff: 1, 2, 4, 8, 16... capped at 60 seconds
-        backoff=$(( backoff * 2 ))
-        (( backoff > 60 )) && backoff=60
+        backoff=$(( backoff * 2 )); (( backoff > 60 )) && backoff=60
     done
 
-    session_unregister "${session_id}"
-    log_info "Watchdog exiting for '${session_name}' [${session_id}]" "watchdog"
+    session_unregister "${sid}"
+    log_info "Watchdog exiting for '${name}' [${sid}]" "watchdog"
+    return 0
+}
+
+# Function: _launch_session
+# Description: Launch a session either directly or under the watchdog supervisor,
+#              based on the leading flag. Keeps the per-mode launch call sites to
+#              a single, uniform form and guarantees --watchdog behaves
+#              identically everywhere. Both targets set LAUNCH_SID.
+# Parameters:
+#   $1     - Supervised flag ("true" to run under the watchdog)
+#   $2..   - Standard launch arguments (name, mode, proto, lport, cmd,
+#            rhost, rport, stderr_file)
+# Returns: 0 on success (LAUNCH_SID set), 1 on failure
+_launch_session() {
+    local supervised="${1:-false}"
+    shift
+    if [[ "${supervised}" == true ]]; then
+        launch_supervised_session "$@"
+    else
+        launch_socat_session "$@"
+    fi
 }
 
 #======================================================================
@@ -1772,6 +2688,7 @@ watchdog_loop() {
 mode_listen() {
     local port="" proto="${DEFAULT_PROTOCOL}" extra_opts=""
     local use_watchdog=false session_name="" logfile="" bind_addr=""
+    local allow_cidr="" tcpwrap_name="" range_value="" filter_opts=""
     local dual_stack=false capture=false capture_logfile=""
 
     # Parse listen-specific arguments
@@ -1790,6 +2707,16 @@ mode_listen() {
             --socat-opts)    extra_opts="${2:?--socat-opts requires a value}"
                              validate_socat_opts "${extra_opts}" || exit 1
                              shift 2 ;;
+            --allow)         allow_cidr="${2:?--allow requires a CIDR value}"
+                             range_value="$(validate_source_range "${allow_cidr}")" || exit 1
+                             shift 2 ;;
+            --tcpwrap)       if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                                 tcpwrap_name="${2}"; shift 2
+                             else
+                                 tcpwrap_name="socat"; shift
+                             fi
+                             validate_tcpwrap_name "${tcpwrap_name}" || exit 1
+                             ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
             -h|--help)       show_listen_help; exit 0 ;;
             *)               log_error "Unknown listen option: ${1}"; exit 1 ;;
@@ -1825,18 +2752,30 @@ mode_listen() {
         extra_opts="bind=${bind_addr}${extra_opts:+,${extra_opts}}"
     fi
 
+    # Assemble listener source-filter options (range=, tcpwrap=)
+    filter_opts="$(build_filter_opts "${range_value}" "${tcpwrap_name}")"
+
     # Build the socat command
     local cmd
-    cmd=$(build_socat_listen_cmd "${proto}" "${port}" "${logfile}" "${extra_opts}" "${capture}")
+    cmd=$(build_socat_listen_cmd "${proto}" "${port}" "${logfile}" "${extra_opts}" "${capture}" "${filter_opts}")
+
+    # Capture mode: create the primary-listener capture log up front (0600) so
+    # its path can be displayed and wired as the socat stderr target. Without
+    # this, --capture output falls through to the session error log and no
+    # capture file is produced.
+    if [[ "${capture}" == true ]]; then
+        capture_logfile="${LOG_DIR}/capture-${proto}-${port}-${EXEC_TIMESTAMP}.log"
+        touch "${capture_logfile}" && chmod 600 "${capture_logfile}" 2>/dev/null || true
+    fi
 
     # Display configuration
     print_section "Listener Configuration"
     print_kv "Port" "${port}"
     print_kv "Protocol" "${proto}${dual_stack:+ + $(get_alt_protocol "${proto}")}"
     print_kv "Session Name" "${session_name}"
-    print_kv "Data Log" "${logfile}"
+    print_kv "Data Log (raw bytes)" "${logfile}"
     print_kv "Traffic Capture" "${capture}"
-    [[ "${capture}" == true ]] && print_kv "Capture Log" "${capture_logfile}"
+    [[ "${capture}" == true ]] && print_kv "Capture Log (hex+ASCII text)" "${capture_logfile}"
     print_kv "Watchdog" "${use_watchdog}"
     print_kv "Dual-Stack" "${dual_stack}"
     [[ -n "${bind_addr}" ]] && print_kv "Bind Address" "${bind_addr}"
@@ -1850,7 +2789,7 @@ mode_listen() {
     local stderr_file=""
     [[ "${capture}" == true && -n "${capture_logfile}" ]] && stderr_file="${capture_logfile}"
 
-    launch_socat_session "${session_name}" "listen" "${proto}" "${port}" "${cmd}" "" "" "${stderr_file}" || exit 1
+    _launch_session "${use_watchdog}" "${session_name}" "listen" "${proto}" "${port}" "${cmd}" "" "" "${stderr_file}" || exit 1
     local primary_sid="${LAUNCH_SID}"
 
     log_success "Listener active on ${proto}:${port} (SID ${primary_sid})"
@@ -1862,7 +2801,7 @@ mode_listen() {
         local alt_name="${alt_proto}-${port}"
         local alt_logfile="${LOG_DIR}/listener-${alt_proto}-${port}.log"
         local alt_cmd
-        alt_cmd=$(build_socat_listen_cmd "${alt_proto}" "${port}" "${alt_logfile}" "${extra_opts}" "${capture}")
+        alt_cmd=$(build_socat_listen_cmd "${alt_proto}" "${port}" "${alt_logfile}" "${extra_opts}" "${capture}" "${filter_opts}")
 
         if check_port_available "${port}" "${alt_proto}"; then
             local alt_capture_logfile=""
@@ -1871,7 +2810,7 @@ mode_listen() {
             local alt_stderr=""
             [[ "${capture}" == true && -n "${alt_capture_logfile}" ]] && alt_stderr="${alt_capture_logfile}"
 
-            launch_socat_session "${alt_name}" "listen" "${alt_proto}" "${port}" "${alt_cmd}" "" "" "${alt_stderr}" || {
+            _launch_session "${use_watchdog}" "${alt_name}" "listen" "${alt_proto}" "${port}" "${alt_cmd}" "" "" "${alt_stderr}" || {
                 log_warning "Dual-stack ${alt_proto} listener failed on port ${port}"
             }
             if [[ -n "${LAUNCH_SID}" ]]; then
@@ -1902,6 +2841,7 @@ mode_listen() {
 mode_batch() {
     local ports_arg="" range_arg="" config_arg="" proto="${DEFAULT_PROTOCOL}"
     local dual_stack=false use_watchdog=false capture=false
+    local allow_cidr="" tcpwrap_name="" range_value="" filter_opts=""
 
     # Parse batch-specific arguments
     while [[ $# -gt 0 ]]; do
@@ -1913,11 +2853,24 @@ mode_batch() {
             --dual-stack)    dual_stack=true; shift ;;
             --watchdog)      use_watchdog=true; shift ;;
             --capture)       capture=true; shift ;;
+            --allow)         allow_cidr="${2:?--allow requires a CIDR value}"
+                             range_value="$(validate_source_range "${allow_cidr}")" || exit 1
+                             shift 2 ;;
+            --tcpwrap)       if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                                 tcpwrap_name="${2}"; shift 2
+                             else
+                                 tcpwrap_name="socat"; shift
+                             fi
+                             validate_tcpwrap_name "${tcpwrap_name}" || exit 1
+                             ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
             -h|--help)       show_batch_help; exit 0 ;;
             *)               log_error "Unknown batch option: ${1}"; exit 1 ;;
         esac
     done
+
+    # Assemble listener source-filter options once (constant across all ports)
+    filter_opts="$(build_filter_opts "${range_value}" "${tcpwrap_name}")"
 
     # At least one port source is required
     if [[ -z "${ports_arg}" && -z "${range_arg}" && -z "${config_arg}" ]]; then
@@ -2011,9 +2964,9 @@ mode_batch() {
         fi
 
         local cmd
-        cmd=$(build_socat_listen_cmd "${proto}" "${port}" "${logfile}" "" "${capture}")
+        cmd=$(build_socat_listen_cmd "${proto}" "${port}" "${logfile}" "" "${capture}" "${filter_opts}")
 
-        launch_socat_session "${session_name}" "batch-listen" "${proto}" "${port}" "${cmd}" "" "" "${stderr_file}" || {
+        _launch_session "${use_watchdog}" "${session_name}" "batch-listen" "${proto}" "${port}" "${cmd}" "" "" "${stderr_file}" || {
             ((failed++)) || true
             continue
         }
@@ -2036,8 +2989,8 @@ mode_batch() {
                     alt_stderr="${alt_capture_logfile}"
                 fi
                 local alt_cmd
-                alt_cmd=$(build_socat_listen_cmd "${alt_proto}" "${port}" "${alt_logfile}" "" "${capture}")
-                launch_socat_session "${alt_session}" "batch-listen" "${alt_proto}" "${port}" "${alt_cmd}" "" "" "${alt_stderr}" || {
+                alt_cmd=$(build_socat_listen_cmd "${alt_proto}" "${port}" "${alt_logfile}" "" "${capture}" "${filter_opts}")
+                _launch_session "${use_watchdog}" "${alt_session}" "batch-listen" "${alt_proto}" "${port}" "${alt_cmd}" "" "" "${alt_stderr}" || {
                     continue
                 }
                 ((started++)) || true
@@ -2072,6 +3025,7 @@ mode_forward() {
     local lport="" rhost="" rport="" proto="${DEFAULT_PROTOCOL}" remote_proto=""
     local use_watchdog=false session_name="" dual_stack=false
     local capture=false capture_logfile=""
+    local allow_cidr="" tcpwrap_name="" range_value="" filter_opts=""
 
     # Parse forward-specific arguments
     while [[ $# -gt 0 ]]; do
@@ -2087,8 +3041,18 @@ mode_forward() {
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             --capture)       capture=true; shift ;;
-            --logfile)       logfile="${2:?--logfile requires a value}"; shift 2 ;;
+            --logfile)       capture_logfile="${2:?--logfile requires a value}"; shift 2 ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
+            --allow)         allow_cidr="${2:?--allow requires a CIDR value}"
+                             range_value="$(validate_source_range "${allow_cidr}")" || exit 1
+                             shift 2 ;;
+            --tcpwrap)       if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                                 tcpwrap_name="${2}"; shift 2
+                             else
+                                 tcpwrap_name="socat"; shift
+                             fi
+                             validate_tcpwrap_name "${tcpwrap_name}" || exit 1
+                             ;;
             -h|--help)       show_forward_help; exit 0 ;;
             *)               log_error "Unknown forward option: ${1}"; exit 1 ;;
         esac
@@ -2124,11 +3088,13 @@ mode_forward() {
 
     # Build command
     local cmd
-    cmd=$(build_socat_forward_cmd "${proto}" "${lport}" "${rhost}" "${rport}" "${remote_proto}" "${capture}")
+    filter_opts="$(build_filter_opts "${range_value}" "${tcpwrap_name}")"
+    cmd=$(build_socat_forward_cmd "${proto}" "${lport}" "${rhost}" "${rport}" "${remote_proto}" "${capture}" "${filter_opts}")
 
-    # Set up capture log if --capture is enabled
+    # Set up capture log if --capture is enabled. A user-supplied --logfile
+    # overrides the auto-generated path; otherwise a per-session path is used.
     if [[ "${capture}" == true ]]; then
-        capture_logfile="${LOG_DIR}/capture-${proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
+        [[ -z "${capture_logfile}" ]] && capture_logfile="${LOG_DIR}/capture-${proto}-${lport}-${rhost}-${rport}-${EXEC_TIMESTAMP}.log"
         touch "${capture_logfile}" && chmod 600 "${capture_logfile}" 2>/dev/null || true
     fi
 
@@ -2151,7 +3117,7 @@ mode_forward() {
     local stderr_file=""
     [[ "${capture}" == true && -n "${capture_logfile}" ]] && stderr_file="${capture_logfile}"
 
-    launch_socat_session "${session_name}" "forward" "${proto}" "${lport}" \
+    _launch_session "${use_watchdog}" "${session_name}" "forward" "${proto}" "${lport}" \
         "${cmd}" "${rhost}" "${rport}" "${stderr_file}" || exit 1
     local primary_sid="${LAUNCH_SID}"
 
@@ -2164,7 +3130,7 @@ mode_forward() {
         alt_remote_proto="$(get_alt_protocol "${remote_proto}")"
         local alt_name="fwd-${alt_proto}-${lport}-${rhost}-${rport}"
         local alt_cmd
-        alt_cmd=$(build_socat_forward_cmd "${alt_proto}" "${lport}" "${rhost}" "${rport}" "${alt_remote_proto}" "${capture}")
+        alt_cmd=$(build_socat_forward_cmd "${alt_proto}" "${lport}" "${rhost}" "${rport}" "${alt_remote_proto}" "${capture}" "${filter_opts}")
             local alt_capture_logfile=""
             local alt_stderr=""
             if [[ "${capture}" == true ]]; then
@@ -2174,7 +3140,7 @@ mode_forward() {
             fi
 
         if check_port_available "${lport}" "${alt_proto}"; then
-            launch_socat_session "${alt_name}" "forward" "${alt_proto}" "${lport}" \
+            _launch_session "${use_watchdog}" "${alt_name}" "forward" "${alt_proto}" "${lport}" \
                 "${alt_cmd}" "${rhost}" "${rport}" "${alt_stderr}" || {
                 log_warning "Dual-stack ${alt_proto} forwarder failed on port ${lport}"
             }
@@ -2208,6 +3174,9 @@ mode_tunnel() {
     local lport="" rhost="" rport="" cert="" key=""
     local use_watchdog=false session_name="" cn="localhost" dual_stack=false
     local capture=false capture_logfile=""
+    local remote_proto="tcp4"
+    local key_type="rsa"
+    local allow_cidr="" tcpwrap_name="" range_value="" filter_opts=""
 
     # Parse tunnel-specific arguments
     while [[ $# -gt 0 ]]; do
@@ -2218,19 +3187,25 @@ mode_tunnel() {
             --cert)          cert="${2:?--cert requires a value}"; shift 2 ;;
             --key)           key="${2:?--key requires a value}"; shift 2 ;;
             --cn)            cn="${2:?--cn requires a value}"; shift 2 ;;
+            --key-type)      key_type="${2:?--key-type requires a value}"
+                             key_type="${key_type,,}"
+                             if [[ "${key_type}" != "rsa" && "${key_type}" != "ec" ]]; then
+                                 log_error "Invalid --key-type: ${key_type} (use rsa or ec)"; exit 1
+                             fi
+                             shift 2 ;;
             --name)          session_name="${2:?--name requires a value}"
                              validate_session_name "${session_name}" || exit 1
                              shift 2 ;;
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             --proto)         
-                # TLS tunnels are TCP-only. Accept --proto for consistency
-                # but only allow TCP variants. Reject UDP with guidance.
+                # TLS tunnels are TCP-only. Accept --proto for the remote leg
+                # family (TCP4/TCP6) and reject UDP with guidance.
                 local tunnel_proto="${2:?--proto requires a value}"
                 tunnel_proto="${tunnel_proto,,}"
                 case "${tunnel_proto}" in
-                    tcp|tcp4) log_debug "Tunnel using default TCP4" "tunnel" ;;
-                    tcp6)     log_warning "TCP6 TLS tunnels not currently supported; using TCP4" "tunnel" ;;
+                    tcp|tcp4) remote_proto="tcp4" ;;
+                    tcp6)     remote_proto="tcp6" ;;
                     udp|udp4|udp6)
                         log_error "TLS tunnels require TCP. UDP is not supported for encrypted tunnels."
                         log_info "For UDP forwarding, use: ${SCRIPT_NAME} forward --proto udp4 --lport <PORT> --rhost <HOST> --rport <PORT>"
@@ -2242,6 +3217,16 @@ mode_tunnel() {
             --capture)       capture=true; shift ;;
             --logfile)       capture_logfile="${2:?--logfile requires a value}"; shift 2 ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
+            --allow)         allow_cidr="${2:?--allow requires a CIDR value}"
+                             range_value="$(validate_source_range "${allow_cidr}")" || exit 1
+                             shift 2 ;;
+            --tcpwrap)       if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                                 tcpwrap_name="${2}"; shift 2
+                             else
+                                 tcpwrap_name="socat"; shift
+                             fi
+                             validate_tcpwrap_name "${tcpwrap_name}" || exit 1
+                             ;;
             -h|--help)       show_tunnel_help; exit 0 ;;
             *)               log_error "Unknown tunnel option: ${1}"; exit 1 ;;
         esac
@@ -2256,6 +3241,13 @@ mode_tunnel() {
     validate_port "${rport}" || exit 1
     validate_hostname "${rhost}" || exit 1
 
+    # An IPv6 literal target cannot be reached over TCP4, so force the remote
+    # leg to TCP6 regardless of any --proto default. (Explicit --proto tcp6 sets
+    # this too.) Hostnames and IPv4 keep the tcp4 default.
+    if [[ "${rhost}" == *:* ]]; then
+        remote_proto="tcp6"
+    fi
+
     # Dual-stack advisory: TLS/OpenSSL tunnels are TCP-only by design
     if [[ "${dual_stack}" == true ]]; then
         log_warning "TLS tunnels use TCP only. --dual-stack will add a plaintext UDP forwarder (unencrypted) on the same port." "tunnel"
@@ -2267,7 +3259,7 @@ mode_tunnel() {
     if [[ -z "${cert}" || -z "${key}" ]]; then
         log_info "No certificate provided; generating self-signed cert..." "tunnel"
         local cert_pair
-        cert_pair=$(generate_self_signed_cert "${cn}") || exit 1
+        cert_pair=$(generate_self_signed_cert "${cn}" "${key_type}") || exit 1
         cert="${cert_pair%% *}"
         key="${cert_pair##* }"
     else
@@ -2289,7 +3281,8 @@ mode_tunnel() {
 
     # Build command
     local cmd
-    cmd=$(build_socat_tunnel_cmd "${lport}" "${rhost}" "${rport}" "${cert}" "${key}" "${capture}")
+    filter_opts="$(build_filter_opts "${range_value}" "${tcpwrap_name}")"
+    cmd=$(build_socat_tunnel_cmd "${lport}" "${rhost}" "${rport}" "${cert}" "${key}" "${capture}" "${remote_proto}" "${filter_opts}")
 
     # Set up capture log if --capture is enabled
     if [[ "${capture}" == true ]]; then
@@ -2317,7 +3310,7 @@ mode_tunnel() {
     local stderr_file=""
     [[ "${capture}" == true && -n "${capture_logfile}" ]] && stderr_file="${capture_logfile}"
 
-    launch_socat_session "${session_name}" "tunnel" "tls" "${lport}" \
+    _launch_session "${use_watchdog}" "${session_name}" "tunnel" "tls" "${lport}" \
         "${cmd}" "${rhost}" "${rport}" "${stderr_file}" || exit 1
     local primary_sid="${LAUNCH_SID}"
 
@@ -2338,7 +3331,7 @@ mode_tunnel() {
                 udp_stderr="${udp_capture_logfile}"
             fi
 
-            launch_socat_session "${udp_name}" "tunnel-udp" "udp4" "${lport}" \
+            _launch_session "${use_watchdog}" "${udp_name}" "tunnel-udp" "udp4" "${lport}" \
                 "${udp_cmd}" "${rhost}" "${rport}" "${udp_stderr}" || {
                 log_warning "Dual-stack UDP forwarder failed on port ${lport}"
             }
@@ -2372,6 +3365,7 @@ mode_tunnel() {
 mode_redirect() {
     local lport="" rhost="" rport="" logfile="" proto="${DEFAULT_PROTOCOL}"
     local use_watchdog=false session_name="" capture=false dual_stack=false
+    local allow_cidr="" tcpwrap_name="" range_value="" filter_opts=""
 
     # Parse redirect-specific arguments
     while [[ $# -gt 0 ]]; do
@@ -2388,6 +3382,16 @@ mode_redirect() {
             --watchdog)      use_watchdog=true; shift ;;
             --dual-stack)    dual_stack=true; shift ;;
             -v|--verbose)    VERBOSE_MODE=true; shift ;;
+            --allow)         allow_cidr="${2:?--allow requires a CIDR value}"
+                             range_value="$(validate_source_range "${allow_cidr}")" || exit 1
+                             shift 2 ;;
+            --tcpwrap)       if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                                 tcpwrap_name="${2}"; shift 2
+                             else
+                                 tcpwrap_name="socat"; shift
+                             fi
+                             validate_tcpwrap_name "${tcpwrap_name}" || exit 1
+                             ;;
             -h|--help)       show_redirect_help; exit 0 ;;
             *)               log_error "Unknown redirect option: ${1}"; exit 1 ;;
         esac
@@ -2422,7 +3426,8 @@ mode_redirect() {
 
     # Build command using protocol-aware builder
     local cmd
-    cmd=$(build_socat_redirect_cmd "${proto}" "${lport}" "${rhost}" "${rport}" "${capture}")
+    filter_opts="$(build_filter_opts "${range_value}" "${tcpwrap_name}")"
+    cmd=$(build_socat_redirect_cmd "${proto}" "${lport}" "${rhost}" "${rport}" "${capture}" "${filter_opts}")
 
     # Display configuration
     print_section "Redirect Configuration"
@@ -2442,7 +3447,7 @@ mode_redirect() {
     local stderr_file=""
     [[ "${capture}" == true && -n "${logfile}" ]] && stderr_file="${logfile}"
 
-    launch_socat_session "${session_name}" "redirect" "${proto}" "${lport}" \
+    _launch_session "${use_watchdog}" "${session_name}" "redirect" "${proto}" "${lport}" \
         "${cmd}" "${rhost}" "${rport}" "${stderr_file}" || exit 1
     local primary_sid="${LAUNCH_SID}"
 
@@ -2461,11 +3466,11 @@ mode_redirect() {
                 touch "${alt_logfile}" && chmod 600 "${alt_logfile}" 2>/dev/null || true
             fi
             local alt_cmd
-            alt_cmd=$(build_socat_redirect_cmd "${alt_proto}" "${lport}" "${rhost}" "${rport}" "${capture}")
+            alt_cmd=$(build_socat_redirect_cmd "${alt_proto}" "${lport}" "${rhost}" "${rport}" "${capture}" "${filter_opts}")
             local alt_stderr=""
             [[ "${capture}" == true && -n "${alt_logfile}" ]] && alt_stderr="${alt_logfile}"
 
-            launch_socat_session "${alt_name}" "redirect" "${alt_proto}" "${lport}" \
+            _launch_session "${use_watchdog}" "${alt_name}" "redirect" "${alt_proto}" "${lport}" \
                 "${alt_cmd}" "${rhost}" "${rport}" "${alt_stderr}" || {
                 log_warning "Dual-stack ${alt_proto} redirector failed on port ${lport}"
             }
@@ -2769,7 +3774,7 @@ mode_stop() {
 
 # Function: _stop_session
 # Description: Stop a single session by its session ID. Implements a
-#              comprehensive, protocol-aware stop sequence:
+#              multi-step, protocol-aware stop sequence:
 #
 #              1. Read session metadata including PROTOCOL
 #              2. Signal watchdog to stop (if applicable)
@@ -2900,18 +3905,30 @@ _stop_session() {
         fi
     fi
 
-    # Step 9: Remove session file and associated signal files
-    rm -f "${session_file}" "${SESSION_DIR}/${sid}.stop" "${SESSION_DIR}/${sid}.launching" 2>/dev/null
+    # Step 9: Remove tracking files only when the process is confirmed dead.
+    # The transient launching marker is always cleared. If death could not be
+    # confirmed, the session file (and any .stop signal) are retained so the
+    # session stays visible and stoppable on retry, and the failure is reported
+    # to the caller rather than masked by a removed file.
+    rm -f "${SESSION_DIR}/${sid}.launching" 2>/dev/null || true
 
     if [[ "${final_check}" == true ]]; then
+        local _stop_rhost _stop_rport
+        _stop_rhost="$(session_read_field "${session_file}" "REMOTE_HOST")"
+        _stop_rport="$(session_read_field "${session_file}" "REMOTE_PORT")"
+        _audit_record_event "stop" "${sid}" "${name}" "${mode}" "${proto}" \
+            "${lport}" "${_stop_rhost}" "${_stop_rport}" "${pid}" "${pgid}" "session stopped"
+        rm -f "${session_file}" "${SESSION_DIR}/${sid}.stop" 2>/dev/null || true
         log_success "Stopped: ${sid} (${name}, ${proto})" "stop"
         log_session "${sid}" "INFO" "Session stopped successfully"
-    else
-        log_warning "Session ${sid} (${name}) may not be fully stopped - manual verification recommended" "stop"
-        log_session "${sid}" "WARNING" "Session stop may be incomplete"
+        return 0
     fi
 
-    return 0
+    _audit_record_event "stop_failed" "${sid}" "${name}" "${mode}" "${proto}" \
+        "${lport}" "" "" "${pid}" "${pgid}" "stop could not be confirmed"
+    log_warning "Session ${sid} (${name}) could not be confirmed stopped - session file retained for retry" "stop"
+    log_session "${sid}" "WARNING" "Session stop incomplete; session file retained"
+    return 1
 }
 
 # Function: _kill_by_port
@@ -2933,11 +3950,20 @@ _kill_by_port() {
         ss_flag="-ulnp"
     fi
 
-    # Try ss first to find PIDs on this port for this protocol only
+    # Try ss first to find PIDs on this port for this protocol only. The local
+    # address:port is the 4th column; the port is compared exactly (the last
+    # colon-separated field) so a matching peer port or a longer port that merely
+    # contains these digits cannot cause a false hit. PID extraction uses awk's
+    # ERE (portable) rather than grep -P (\K), which is GNU-only.
     if command -v ss &>/dev/null; then
         local pids
-        pids="$(ss ${ss_flag} 2>/dev/null | grep ":${port} " | \
-                grep -oP 'pid=\K[0-9]+' | sort -u || true)"
+        pids="$(ss ${ss_flag} 2>/dev/null | awk -v port="${port}" '
+            NR > 1 {
+                n = split($4, a, ":")
+                if (a[n] == port && match($0, /pid=[0-9]+/)) {
+                    print substr($0, RSTART + 4, RLENGTH - 4)
+                }
+            }' | sort -u || true)"
 
         if [[ -n "${pids}" ]]; then
             while IFS= read -r p; do
@@ -3109,7 +4135,7 @@ check_socat() {
 show_main_help() {
     cat << 'HELPEOF'
 NAME
-    socat_manager.sh - Comprehensive socat network operations manager
+    socat_manager.sh - socat network operations manager
 
 SYNOPSIS
     socat_manager.sh <MODE> [OPTIONS]
@@ -3122,11 +4148,16 @@ MODES
     redirect    Redirect/proxy traffic with optional capture
     status      Display all active managed sessions
     stop        Stop sessions (by ID, name, port, PID, or all)
+    audit       View the persistent audit history (requires sqlite3)
+    menu        Launch the interactive menu
 
 GLOBAL OPTIONS
     --proto <PROTOCOL>   Select protocol: tcp, tcp4, tcp6, udp, udp4, udp6
     --dual-stack         Launch both TCP and UDP sessions simultaneously
-    --capture            Enable traffic capture (hex dump) for any mode
+    --capture            Enable traffic capture (readable hex + ASCII dump)
+    --log-format <FMT>   Log file format: text (default) or json (NDJSON)
+    --log-level <LEVEL>  Minimum level to log: DEBUG, INFO (default), WARNING,
+                         ERROR, CRITICAL. -v/--verbose forces DEBUG.
     -v, --verbose        Enable debug-level console output
     -h, --help           Show help (context-sensitive per mode)
 
@@ -3252,6 +4283,10 @@ OPTIONS
     --capture                Enable traffic capture (verbose hex dump)
     --watchdog               Enable auto-restart on crash
     --socat-opts <OPTS>      Additional socat address options
+    --allow <CIDR>           Accept only connections from an IPv4/IPv6
+                             source range (maps to socat range=)
+    --tcpwrap [NAME]         Enforce /etc/hosts.allow and /etc/hosts.deny
+                             via TCP wrappers (default daemon name: socat)
     -v, --verbose            Debug output
     -h, --help               Show this help
 
@@ -3286,6 +4321,10 @@ OPTIONS
     --dual-stack             Start both TCP and UDP per port
     --capture                Enable traffic capture (verbose hex dump)
     --watchdog               Enable auto-restart for all listeners
+    --allow <CIDR>           Accept only connections from an IPv4/IPv6
+                             source range (maps to socat range=)
+    --tcpwrap [NAME]         Enforce /etc/hosts.allow and /etc/hosts.deny
+                             via TCP wrappers (default daemon name: socat)
     -v, --verbose            Debug output
     -h, --help               Show this help
 
@@ -3322,6 +4361,10 @@ OPTIONS
     --logfile <PATH>         Custom capture log file
     --name <n>            Custom session name
     --watchdog               Enable auto-restart
+    --allow <CIDR>           Accept only connections from an IPv4/IPv6
+                             source range (maps to socat range=)
+    --tcpwrap [NAME]         Enforce /etc/hosts.allow and /etc/hosts.deny
+                             via TCP wrappers (default daemon name: socat)
     -v, --verbose            Debug output
     -h, --help               Show this help
 
@@ -3363,6 +4406,11 @@ OPTIONS
     --logfile <PATH>         Custom capture log file
     --name <n>            Custom session name
     --watchdog               Enable auto-restart
+    --key-type <rsa|ec>      Self-signed key algorithm (default: rsa)
+    --allow <CIDR>           Accept only connections from an IPv4/IPv6
+                             source range (maps to socat range=)
+    --tcpwrap [NAME]         Enforce /etc/hosts.allow and /etc/hosts.deny
+                             via TCP wrappers (default daemon name: socat)
     -v, --verbose            Debug output
     -h, --help               Show this help
 
@@ -3400,6 +4448,10 @@ OPTIONS
     --logfile <PATH>         Custom capture log file
     --name <n>            Custom session name
     --watchdog               Enable auto-restart
+    --allow <CIDR>           Accept only connections from an IPv4/IPv6
+                             source range (maps to socat range=)
+    --tcpwrap [NAME]         Enforce /etc/hosts.allow and /etc/hosts.deny
+                             via TCP wrappers (default daemon name: socat)
     -v, --verbose            Debug output
     -h, --help               Show this help
 
@@ -3614,7 +4666,12 @@ _menu_prompt() {
         echo -ne "  ${CLR_BOLD}${prompt}${CLR_RESET}: " >&2
     fi
 
-    read -r input
+    # Read one line. A failed read means end-of-input (closed stdin / Ctrl+D):
+    # return code 3 so callers can distinguish it from a cancel keyword (2) and
+    # unwind/exit rather than looping on perpetually-empty input.
+    if ! read -r input; then
+        return 3
+    fi
 
     # Check for cancel
     if _is_cancel "${input}"; then
@@ -3646,7 +4703,11 @@ _menu_prompt_yn() {
     while true; do
         echo -ne "  ${CLR_BOLD}${prompt}${CLR_RESET} [${hint}]: " >&2
         local input=""
-        read -r input
+        # EOF (closed stdin) is treated as a cancel so the caller unwinds rather
+        # than looping or tripping set -e on a non-zero read.
+        if ! read -r input; then
+            return 2
+        fi
 
         # Check cancel
         if _is_cancel "${input}"; then
@@ -3677,8 +4738,8 @@ _menu_prompt_choice() {
     local default="${3:-}"
 
     while true; do
-        local input
-        input="$(_menu_prompt "${prompt}" "${default}")" || return 2
+        local input rc
+        input="$(_menu_prompt "${prompt}" "${default}")" || { rc=$?; return "${rc}"; }
 
         # Validate: must be a number within range
         if [[ "${input}" =~ ^[0-9]+$ ]] && (( input >= 0 && input <= max )); then
@@ -3797,14 +4858,16 @@ _menu_prompt_name() {
 _menu_pause() {
     echo "" >&2
     echo -ne "  ${CLR_DIM}Press Enter to return to menu...${CLR_RESET}" >&2
-    read -r
+    # Tolerate EOF (closed stdin) so a non-zero read does not trip set -e; the
+    # menu loop detects end-of-input separately and exits cleanly.
+    read -r || true
 }
 
 # Function: _menu_cancelled
 # Description: Show cancellation message. Called by submenus on return 2.
 _menu_cancelled() {
     echo "" >&2
-    echo -e "  ${CLR_YELLOW}Cancelled — returning to main menu.${CLR_RESET}" >&2
+    echo -e "  ${CLR_YELLOW}Cancelled - returning to main menu.${CLR_RESET}" >&2
     _menu_pause
 }
 
@@ -3888,7 +4951,7 @@ _menu_confirm_execute() {
 # Function: _menu_listen
 # Description: Interactive submenu for Listen mode with cancel support.
 _menu_listen() {
-    _menu_header "Listen Mode — Single TCP/UDP Listener"
+    _menu_header "Listen Mode - Single TCP/UDP Listener"
     _menu_cancel_hint
 
     local port args=()
@@ -3942,7 +5005,7 @@ _menu_listen() {
 # Function: _menu_batch
 # Description: Interactive submenu for Batch mode with cancel support.
 _menu_batch() {
-    _menu_header "Batch Mode — Multiple Listeners"
+    _menu_header "Batch Mode - Multiple Listeners"
     _menu_cancel_hint
 
     local args=(batch)
@@ -3987,7 +5050,7 @@ _menu_batch() {
             ;;
     esac
 
-    # Common flags (protocol, dual-stack, capture, watchdog) — no name for batch
+    # Common flags (protocol, dual-stack, capture, watchdog) - no name for batch
     _menu_collect_common_flags args true false || { _menu_cancelled; return 0; }
 
     # Confirm and execute
@@ -4006,7 +5069,7 @@ _menu_batch() {
 # Function: _menu_forward
 # Description: Interactive submenu for Forward mode with cancel support.
 _menu_forward() {
-    _menu_header "Forward Mode — Traffic Relay"
+    _menu_header "Forward Mode - Traffic Relay"
     _menu_cancel_hint
 
     local lport rhost rport args=(forward)
@@ -4036,7 +5099,7 @@ _menu_forward() {
 # Function: _menu_tunnel
 # Description: Interactive submenu for Tunnel mode (TLS) with cancel.
 _menu_tunnel() {
-    _menu_header "Tunnel Mode — TLS Encrypted Tunnel"
+    _menu_header "Tunnel Mode - TLS Encrypted Tunnel"
     _menu_cancel_hint
 
     local lport rhost rport args=(tunnel)
@@ -4075,7 +5138,7 @@ _menu_tunnel() {
         echo -e "  ${CLR_DIM}Auto-generating self-signed certificate${CLR_RESET}" >&2
     fi
 
-    # Common flags (no separate protocol for tunnel — TLS is TCP only)
+    # Common flags (no separate protocol for tunnel - TLS is TCP only)
     _menu_collect_common_flags args false true || { _menu_cancelled; return 0; }
 
     # Confirm and execute
@@ -4094,7 +5157,7 @@ _menu_tunnel() {
 # Function: _menu_redirect
 # Description: Interactive submenu for Redirect mode with cancel.
 _menu_redirect() {
-    _menu_header "Redirect Mode — Transparent Port Redirection"
+    _menu_header "Redirect Mode - Transparent Port Redirection"
     _menu_cancel_hint
 
     local lport rhost rport args=(redirect)
@@ -4132,7 +5195,7 @@ _menu_status() {
     echo "    0) Back to main menu" >&2
 
     local choice
-    choice="$(_menu_prompt_choice "Option" 3 "1")"
+    choice="$(_menu_prompt_choice "Option" 3 "1")" || return 0
 
     case "${choice}" in
         0) return 0 ;;
@@ -4147,7 +5210,7 @@ _menu_status() {
             if echo "${cleanup_output}" | grep -qi 'cleaned'; then
                 echo "${cleanup_output}" >&2
             else
-                echo -e "  ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} No dead sessions found — all sessions are healthy or none exist." >&2
+                echo -e "  ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} No dead sessions found - all sessions are healthy or none exist." >&2
             fi
             ;;
     esac
@@ -4167,7 +5230,7 @@ _menu_stop() {
     echo "    0) Back to main menu" >&2
 
     local choice
-    choice="$(_menu_prompt_choice "Option" 4 "1")"
+    choice="$(_menu_prompt_choice "Option" 4 "1")" || return 0
 
     case "${choice}" in
         0) return 0 ;;
@@ -4189,14 +5252,14 @@ _menu_stop() {
             echo "" >&2
 
             local sname
-            sname="$(_menu_prompt "Session name to stop")"
+            sname="$(_menu_prompt "Session name to stop")" || sname=""
             if [[ -n "${sname}" ]] && ! _is_cancel "${sname}"; then
                 main stop --name "${sname}"
             fi
             ;;
         3)
             local sport
-            sport="$(_menu_prompt_port "Port number to stop")"
+            sport="$(_menu_prompt_port "Port number to stop")" || sport=""
             if [[ $? -eq 0 ]] && [[ -n "${sport}" ]]; then
                 main stop --port "${sport}"
             fi
@@ -4239,7 +5302,8 @@ _menu_check_deps() {
     # socat
     if command -v socat &>/dev/null; then
         local socat_ver
-        socat_ver="$(socat -V 2>/dev/null | grep -oP 'socat version \K[0-9.]+' || echo "unknown")"
+        socat_ver="$(socat -V 2>/dev/null | sed -n 's/.*socat version \([0-9][0-9.]*\).*/\1/p' | head -1)"
+        [[ -z "${socat_ver}" ]] && socat_ver="unknown"
         echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} socat ${socat_ver}" >&2
     else
         echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} socat (not found)" >&2
@@ -4258,7 +5322,7 @@ _menu_check_deps() {
     if command -v setsid &>/dev/null; then
         echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} setsid (util-linux)" >&2
     else
-        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} setsid (not found — install util-linux)" >&2
+        echo -e "    ${CLR_RED}[${SYM_FAIL}]${CLR_RESET} setsid (not found - install util-linux)" >&2
         all_ok=false
     fi
 
@@ -4271,28 +5335,28 @@ _menu_check_deps() {
         ssl_ver="$(openssl version 2>/dev/null | awk '{print $2}' || echo "unknown")"
         echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} openssl ${ssl_ver} (tunnel mode TLS)" >&2
     else
-        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} openssl (not found — required for tunnel mode)" >&2
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} openssl (not found - required for tunnel mode)" >&2
     fi
 
     # ss
     if command -v ss &>/dev/null; then
-        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} ss (iproute2 — port detection)" >&2
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} ss (iproute2 - port detection)" >&2
     else
-        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} ss (not found — port checks will use netstat)" >&2
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} ss (not found - port checks will use netstat)" >&2
     fi
 
     # flock
     if command -v flock &>/dev/null; then
-        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} flock (util-linux — session locking)" >&2
+        echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} flock (util-linux - session locking)" >&2
     else
-        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} flock (not found — concurrent access unprotected)" >&2
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} flock (not found - concurrent access unprotected)" >&2
     fi
 
     # lsof
     if command -v lsof &>/dev/null; then
         echo -e "    ${CLR_GREEN}[${SYM_OK}]${CLR_RESET} lsof (fallback port/process detection)" >&2
     else
-        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} lsof (not found — optional fallback)" >&2
+        echo -e "    ${CLR_YELLOW}[${SYM_WARN}]${CLR_RESET} lsof (not found - optional fallback)" >&2
     fi
 
     echo "" >&2
@@ -4346,16 +5410,25 @@ interactive_menu() {
     # Ensure directories exist for status/dep checks
     _ensure_dirs
 
+    # In interactive mode, Ctrl+C (SIGINT) must cancel the current prompt and
+    # return to the menu rather than terminating the framework. The global INT
+    # trap runs cleanup_handler (which exits); override it for the lifetime of
+    # the menu. A prompt read in a command substitution is run in a subshell:
+    # SIGINT terminates that subshell (default disposition), its non-zero status
+    # is treated as a cancel by the prompt helpers, and the submenu unwinds to
+    # this loop. A newline keeps the redrawn prompt clean.
+    trap 'printf "\n" >&2' INT
+
     while true; do
         _menu_banner
 
         echo "" >&2
         echo -e "  ${CLR_BOLD}Operational Modes:${CLR_RESET}" >&2
-        echo -e "    ${CLR_CYAN}1)${CLR_RESET}  Listen     — Start a TCP/UDP listener" >&2
-        echo -e "    ${CLR_CYAN}2)${CLR_RESET}  Batch      — Launch multiple listeners" >&2
-        echo -e "    ${CLR_CYAN}3)${CLR_RESET}  Forward    — Relay traffic to a remote host" >&2
-        echo -e "    ${CLR_CYAN}4)${CLR_RESET}  Tunnel     — Create a TLS-encrypted tunnel" >&2
-        echo -e "    ${CLR_CYAN}5)${CLR_RESET}  Redirect   — Transparent port redirection" >&2
+        echo -e "    ${CLR_CYAN}1)${CLR_RESET}  Listen     - Start a TCP/UDP listener" >&2
+        echo -e "    ${CLR_CYAN}2)${CLR_RESET}  Batch      - Launch multiple listeners" >&2
+        echo -e "    ${CLR_CYAN}3)${CLR_RESET}  Forward    - Relay traffic to a remote host" >&2
+        echo -e "    ${CLR_CYAN}4)${CLR_RESET}  Tunnel     - Create a TLS-encrypted tunnel" >&2
+        echo -e "    ${CLR_CYAN}5)${CLR_RESET}  Redirect   - Transparent port redirection" >&2
         echo "" >&2
         echo -e "  ${CLR_BOLD}Status & Management:${CLR_RESET}" >&2
         echo -e "    ${CLR_CYAN}6)${CLR_RESET}  Session Status" >&2
@@ -4366,8 +5439,17 @@ interactive_menu() {
         echo -e "    ${CLR_CYAN}9)${CLR_RESET}  Help / CLI Usage" >&2
         echo -e "    ${CLR_CYAN}0)${CLR_RESET}  Exit" >&2
 
-        local choice
-        choice="$(_menu_prompt_choice "Select" 9)"
+        local choice choice_rc=0
+        choice="$(_menu_prompt_choice "Select" 9)" || choice_rc=$?
+
+        # End-of-input (closed stdin / Ctrl+D): exit the menu cleanly rather than
+        # spinning on empty reads.
+        if [[ ${choice_rc} -eq 3 ]]; then
+            echo "" >&2
+            echo -e "  ${CLR_DIM}End of input. Goodbye.${CLR_RESET}" >&2
+            echo "" >&2
+            return 0
+        fi
 
         case "${choice}" in
             1) _menu_listen ;;
@@ -4389,6 +5471,107 @@ interactive_menu() {
     done
 }
 
+# Function: show_audit_help
+# Description: Print help for the audit view command.
+show_audit_help() {
+    cat << 'HELPEOF'
+NAME
+    socat_manager.sh audit - View the persistent audit history
+
+SYNOPSIS
+    socat_manager.sh audit [OPTIONS]
+
+DESCRIPTION
+    Print recorded framework events (session launches, stops, watchdog
+    restarts, crashes) from the optional SQLite audit store. Requires the
+    sqlite3 command-line tool. Auditing is active by default when sqlite3 is
+    installed; disable it by setting SOCAT_MANAGER_AUDIT to a false-like value.
+
+OPTIONS
+    --limit <N>              Show at most N most-recent events (default: 50)
+    --type <EVENT>           Filter by event type (launch, stop, stop_failed,
+                             restart, crash, config_change, error)
+    --session <SID>          Filter by session id
+    --prune                  Apply the configured retention window before
+                             listing (SOCAT_MANAGER_AUDIT_RETENTION_DAYS)
+    -h, --help               Show this help
+
+EXAMPLES
+    bash socat_manager.sh audit
+    bash socat_manager.sh audit --limit 20 --type restart
+    bash socat_manager.sh audit --session a1b2c3d4
+HELPEOF
+}
+
+# Function: mode_audit
+# Description: Query and display events from the SQLite audit store. Read-only
+#              apart from the optional --prune retention pass. All filter values
+#              are emitted as escaped SQL literals.
+# Parameters: parsed from "$@" (--limit, --type, --session, --prune)
+mode_audit() {
+    local limit=50 ev_type="" sess="" do_prune=false
+
+    while [[ $# -gt 0 ]]; do
+        case "${1}" in
+            --limit)   limit="${2:?--limit requires a value}"; shift 2 ;;
+            --type)    ev_type="${2:?--type requires a value}"; shift 2 ;;
+            --session) sess="${2:?--session requires a value}"; shift 2 ;;
+            --prune)   do_prune=true; shift ;;
+            -h|--help) show_audit_help; exit 0 ;;
+            *)         log_error "Unknown audit option: ${1}"; exit 1 ;;
+        esac
+    done
+
+    if ! _audit_available; then
+        log_error "sqlite3 is not installed; the audit store is unavailable" "audit"
+        exit 1
+    fi
+
+    if [[ ! "${limit}" =~ ^[0-9]+$ ]] || (( limit < 1 )); then
+        log_error "Invalid --limit '${limit}' (expected a positive integer)" "audit"
+        exit 1
+    fi
+
+    local db
+    db="$(_audit_db_path)"
+    if [[ ! -f "${db}" ]]; then
+        log_info "No audit database found at ${db}" "audit"
+        return 0
+    fi
+
+    if [[ "${do_prune}" == true ]]; then
+        local rd
+        rd="$(_audit_retention_days)"
+        if (( rd > 0 )); then
+            sqlite3 "${db}" "DELETE FROM events WHERE julianday(ts) < julianday('now','-${rd} days');" 2>/dev/null || true
+            log_info "Pruned events older than ${rd} days" "audit"
+        else
+            log_info "Retention not configured (SOCAT_MANAGER_AUDIT_RETENTION_DAYS unset or 0); nothing pruned" "audit"
+        fi
+    fi
+
+    local where="WHERE 1=1"
+    [[ -n "${ev_type}" ]] && where+=" AND event_type=$(_audit_sql_text "${ev_type}")"
+    [[ -n "${sess}" ]]    && where+=" AND session_id=$(_audit_sql_text "${sess}")"
+
+    local query="SELECT ts, event_type, IFNULL(session_id,''), IFNULL(name,''), IFNULL(detail,'') FROM events ${where} ORDER BY id DESC LIMIT ${limit};"
+
+    local rows
+    rows="$(sqlite3 -separator $'\t' "${db}" "${query}" 2>/dev/null)"
+
+    printf '%-21s %-13s %-10s %-16s %s\n' "TIMESTAMP" "EVENT" "SID" "NAME" "DETAIL"
+    if [[ -z "${rows}" ]]; then
+        log_info "No audit events match the query." "audit"
+        return 0
+    fi
+
+    local ts etype esid ename detail
+    while IFS=$'\t' read -r ts etype esid ename detail; do
+        printf '%-21s %-13s %-10s %-16s %s\n' "${ts}" "${etype}" "${esid}" "${ename}" "${detail}"
+    done <<< "${rows}"
+    return 0
+}
+
 #======================================================================
 # MAIN DISPATCHER
 # Routes the first positional argument (mode) to the appropriate
@@ -4398,6 +5581,67 @@ interactive_menu() {
 main() {
     # Ensure directory structure exists
     _ensure_dirs
+
+    # Hidden mode: detached watchdog supervisor (re-exec of this script). Handled
+    # before all user-facing setup (no banner, migration, or dependency check -
+    # the parent already validated the environment). Not shown in help.
+    if [[ "${1:-}" == "__supervise" ]]; then
+        _watchdog_run "${2:?Supervisor requires a session ID}"
+        return $?
+    fi
+
+    # Extract the global --log-format flag from anywhere in the argument list and
+    # strip it so per-mode parsers never see it. It is exported (via
+    # SOCAT_MANAGER_LOG_FORMAT) so the detached watchdog supervisor re-exec logs
+    # in the same format.
+    local -a _passthru_args=()
+    while [[ $# -gt 0 ]]; do
+        case "${1}" in
+            --log-format)
+                local _fmt="${2:?--log-format requires a value (text|json)}"
+                case "${_fmt}" in
+                    text|json)
+                        LOG_FORMAT="${_fmt}"
+                        export SOCAT_MANAGER_LOG_FORMAT="${LOG_FORMAT}"
+                        ;;
+                    *)
+                        log_error "Invalid --log-format '${_fmt}' (expected text or json)"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+                ;;
+            --log-level)
+                local _lvl="${2:?--log-level requires a value (DEBUG|INFO|WARNING|ERROR|CRITICAL)}"
+                # Normalize to upper case so "info" and "INFO" both work.
+                _lvl="${_lvl^^}"
+                case "${_lvl}" in
+                    DEBUG|INFO|WARNING|ERROR|CRITICAL)
+                        LOG_LEVEL="${_lvl}"
+                        export SOCAT_MANAGER_LOG_LEVEL="${LOG_LEVEL}"
+                        ;;
+                    *)
+                        log_error "Invalid --log-level '${2}' (expected DEBUG, INFO, WARNING, ERROR, or CRITICAL)"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+                ;;
+            -v|--verbose)
+                # Verbose is a global flag (documented under GLOBAL OPTIONS) and
+                # is also accepted by the per-mode parsers. Handle it here so it
+                # works in the global position (before the mode, or on its own)
+                # rather than being mistaken for the mode name.
+                VERBOSE_MODE=true
+                shift
+                ;;
+            *)
+                _passthru_args+=("${1}")
+                shift
+                ;;
+        esac
+    done
+    set -- ${_passthru_args[@]+"${_passthru_args[@]}"}
 
     # No arguments: launch interactive menu
     if [[ $# -lt 1 ]]; then
@@ -4435,7 +5679,7 @@ main() {
     # Skip socat check if user is just asking for help (-h/--help in args)
     local needs_socat=true
     case "${mode}" in
-        status|stop) needs_socat=false ;;
+        status|stop|audit) needs_socat=false ;;
     esac
     for arg in "$@"; do
         [[ "${arg}" == "-h" || "${arg}" == "--help" ]] && needs_socat=false
@@ -4451,10 +5695,11 @@ main() {
         redirect) mode_redirect "$@" ;;
         status)   mode_status "$@" ;;
         stop)     mode_stop "$@" ;;
+        audit)    mode_audit "$@" ;;
         *)
             log_error "Unknown mode '${mode}'"
             echo "" >&2
-            echo -e "  Valid modes: listen, batch, forward, tunnel, redirect, status, stop" >&2
+            echo -e "  Valid modes: listen, batch, forward, tunnel, redirect, status, stop, audit" >&2
             echo -e "  Run '${SCRIPT_NAME} --help' for full usage." >&2
             exit 1
             ;;
