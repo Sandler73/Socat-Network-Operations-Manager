@@ -303,24 +303,26 @@ All functions that accept external input validate before processing:
 
 ### 1. Command Execution Model
 
-As of v2.3.0 (post-audit), all `eval` calls have been eliminated from the
-script. The watchdog uses `bash -c` and the main launch path uses
-`setsid bash -c` with PID-file handoff. While `bash -c` still interprets
-strings, all inputs are validated through whitelist functions before reaching
-command construction. The `--socat-opts` parameter previously carried
-risk if validation is bypassed or a new code path introduces unvalidated input.
+The script contains no `eval` calls. socat is executed through an argv array:
+the command is tokenized with a plain field split (no shell parse) and the
+tokens are passed as positional parameters to a fixed launcher script that runs
+`exec "$@"`. No user-supplied component is ever interpreted as shell code, so
+shell metacharacters and globs in any argument are inert. The launcher's first
+token is pinned to `socat`. The watchdog supervisor uses the same argv-based
+launch for every restart.
 
-**Mitigation**: All inputs validated before command string construction.
-Validation functions are called at the mode handler level before the builder
-functions. The `--socat-opts` parameter (listen mode) accepts arbitrary socat
-address options but is validated via `validate_socat_opts()` whitelist.
-
-**Defense in depth**: Consider moving to array-based command execution
-(`"${cmd_array[@]}"`) to eliminate string interpretation entirely.
+**Defense in depth**: In addition to argv-based execution, all inputs are
+validated through whitelist functions before command construction. The
+`--socat-opts` parameter accepts socat address options but is validated by
+`validate_socat_opts()`, which first applies a character whitelist and then
+checks each option against a keyword allowlist, so program-spawning options such
+as `exec`, `system`, and `shell` are rejected. `--allow` (source CIDR) and
+`--tcpwrap` values are validated and rendered by dedicated functions before they
+reach the listener option list.
 
 ### 2. Capture Logs Contain Sensitive Data
 
-When `--capture` is enabled, socat's `-v` mode writes raw traffic hex dumps
+When `--capture` is enabled, socat's `-v -x` mode writes a text-readable hex + ASCII dump of the traffic
 to log files. This may include passwords, authentication tokens, session
 cookies, personal data, or other sensitive information in plaintext.
 
