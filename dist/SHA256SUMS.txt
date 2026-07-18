@@ -1,0 +1,2 @@
+c29c1d1dd358d0d1783589d3675e4dd6eef437ea8f779c1d657488055369be58  socat-manager-v2.3.0-venv-example.tar.gz
+fac8f530eb39512ec5f749e1a1ed4f2242efcd65b559273d27e7700120ea7f94  socat-manager-v2.3.0.tar.gz
