@@ -43,7 +43,7 @@ standards, and submit changes.
 
 This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 By participating, you are expected to uphold this code. This includes the
-**Responsible Use** section — all contributions must be consistent with
+**Responsible Use** section - all contributions must be consistent with
 authorized, lawful use of security tooling.
 
 ---
@@ -88,7 +88,7 @@ make check-deps
 # Run the full test suite to confirm everything works
 make test
 
-# You should see: "✓ All tests passed" with 220 tests passing
+# You should see: "✓ All tests passed" with 319 tests passing
 ```
 
 ### Project Structure
@@ -141,7 +141,7 @@ make test
 ```
 
 This runs ShellCheck linting, then all unit tests, then all integration tests.
-All 220 tests must pass before submitting a PR.
+All 319 tests must pass before submitting a PR.
 
 ### Unit Tests Only
 
@@ -377,8 +377,8 @@ Prefixes: `Add:`, `Fix:`, `Change:`, `Remove:`, `Docs:`, `Test:`, `Refactor:`
 
 1. **Fork and branch**: Create a feature branch from `main`
 2. **Implement**: Make your changes following the coding standards above
-3. **Test**: Run `make test` — all 220 tests must pass
-4. **Lint**: Run `make lint` — no warnings
+3. **Test**: Run `make test` - all 319 tests must pass
+4. **Lint**: Run `make lint` - no warnings
 5. **Document**: Update CHANGELOG.md, help text, and README/USAGE_GUIDE as needed
 6. **Commit**: Clear, descriptive commit messages
 7. **Push**: Push your branch to your fork
