@@ -5,10 +5,10 @@
 #
 # Description: Runs on every push and pull request. Three parallel jobs:
 #
-#              1. lint    — ShellCheck static analysis (fast, ~30s)
-#              2. test    — BATS test suite on native Ubuntu runners
+#              1. lint    - ShellCheck static analysis (fast, ~30s)
+#              2. test    - BATS test suite on native Ubuntu runners
 #                           across bash versions (4.4, 5.1, 5.2)
-#              3. test-distros — BATS test suite on additional Linux
+#              3. test-distros - BATS test suite on additional Linux
 #                           distributions via Docker containers
 #                           (Debian, Kali, Rocky, AlmaLinux, Arch)
 #
@@ -114,22 +114,12 @@ jobs:
       - name: Run unit tests
         run: |
           mkdir -p test-results
-          bats tests/unit/ --tap > test-results/unit.tap 2>&1 || {
-            echo "Unit tests failed. Output:"
-            cat test-results/unit.tap
-            exit 1
-          }
-          cat test-results/unit.tap
+          bash tests/run-suite.sh tests/unit test-results/unit.tap
 
       - name: Run integration tests
         run: |
           mkdir -p test-results
-          bats tests/integration/ --tap > test-results/integration.tap 2>&1 || {
-            echo "Integration tests failed. Output:"
-            cat test-results/integration.tap
-            exit 1
-          }
-          cat test-results/integration.tap
+          bash tests/run-suite.sh tests/integration test-results/integration.tap
 
       - name: Upload test results on failure
         if: failure()
@@ -224,22 +214,12 @@ jobs:
       - name: Run unit tests
         run: |
           mkdir -p test-results
-          bats tests/unit/ --tap > test-results/unit.tap 2>&1 || {
-            echo "Unit tests failed:"
-            cat test-results/unit.tap
-            exit 1
-          }
-          cat test-results/unit.tap
+          bash tests/run-suite.sh tests/unit test-results/unit.tap
 
       - name: Run integration tests
         run: |
           mkdir -p test-results
-          bats tests/integration/ --tap > test-results/integration.tap 2>&1 || {
-            echo "Integration tests failed:"
-            cat test-results/integration.tap
-            exit 1
-          }
-          cat test-results/integration.tap
+          bash tests/run-suite.sh tests/integration test-results/integration.tap
 
       - name: Upload test results on failure
         if: failure()
